@@ -74,7 +74,6 @@ function migrateSchema(rawDb) {
     CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(has_gps);
     CREATE INDEX IF NOT EXISTS idx_photos_ext ON photos(ext);
     CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(starred);
-    CREATE INDEX IF NOT EXISTS idx_photos_deleted ON photos(deleted);
     CREATE INDEX IF NOT EXISTS idx_versions_photo ON photo_versions(photo_id);
     CREATE INDEX IF NOT EXISTS idx_album_photos_photo ON album_photos(photo_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
@@ -93,6 +92,7 @@ function migrateSchema(rawDb) {
   rawDb.exec(`
     CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
     CREATE INDEX IF NOT EXISTS idx_photos_hash ON photos(perceptual_hash);
+    CREATE INDEX IF NOT EXISTS idx_photos_deleted ON photos(deleted);
   `);
   rawDb.exec(`
     INSERT OR IGNORE INTO photo_versions (photo_id, version_type, path, settings_json, is_active)

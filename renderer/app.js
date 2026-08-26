@@ -29,6 +29,10 @@ let detailNavList = [];
 let detailNavIndex = -1;
 let photoPresets = [];
 let currentEditPhoto = null;
+let galleryOffset = 0;
+const galleryPageSize = 160;
+let galleryLoading = false;
+let galleryDone = false;
 
 // --- View Switching ---
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -69,23 +73,48 @@ async function loadPhotos(options = {}) {
 
   const dateFrom = document.getElementById('date-from')?.value || '';
   const dateTo = document.getElementById('date-to')?.value || '';
-  const photos = await api.getPhotos({ offset: 0, limit: 500, sortBy, sortDir: 'DESC', filter, searchQuery: searchQ, dateFrom, dateTo });
+  galleryOffset = 0; galleryDone = false; detailNavList = [];
+  await appendPhotos({ sortBy, filter, searchQ, dateFrom, dateTo });
+}
 
-  if (!photos.length) {
-    empty.innerHTML = '<div style=\"font-size:48px;margin-bottom:16px\">📷</div><p>还没有照片，点击上方按钮扫描文件夹</p>';
-    empty.classList.remove('hidden');
-    return;
-  }
-  empty.classList.add('hidden');
-  detailNavList = photos;
+async function appendPhotos(query = {}) {
+  if (galleryLoading || galleryDone) return;
+  const grid = document.getElementById('photo-grid');
+  const empty = document.getElementById('empty-state');
+  galleryLoading = true;
 
-  const frag = document.createDocumentFragment();
-  for (const photo of photos) {
-    frag.appendChild(createPhotoCard(photo));
+  try {
+    const photos = await api.getPhotos({
+      offset: galleryOffset,
+      limit: galleryPageSize,
+      sortBy: query.sortBy || 'date_taken',
+      sortDir: 'DESC',
+      filter: query.filter || '',
+      searchQuery: query.searchQuery || '',
+      dateFrom: query.dateFrom || '',
+      dateTo: query.dateTo || ''
+    });
+    if (!photos.length && galleryOffset === 0) {
+      grid.innerHTML = '';
+      empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">📷</div><p>还没有照片，点击上方按钮扫描文件夹</p>';
+      empty.classList.remove('hidden');
+      galleryDone = true;
+      return;
+    }
+    empty.classList.add('hidden');
+    detailNavList.push(...photos);
+    const frag = document.createDocumentFragment();
+    for (const photo of photos) frag.appendChild(createPhotoCard(photo));
+    grid.appendChild(frag);
+    grid.querySelectorAll('.lazy-thumb:not([data-observed])').forEach(img => {
+      img.dataset.observed = '1';
+      thumbObserver.observe(img);
+    });
+    galleryOffset += photos.length;
+    if (photos.length < galleryPageSize) galleryDone = true;
+  } finally {
+    galleryLoading = false;
   }
-  grid.innerHTML = '';
-  grid.appendChild(frag);
-  grid.querySelectorAll('.lazy-thumb').forEach(img => thumbObserver.observe(img));
 }
 
 function createPhotoCard(photo) {
@@ -97,6 +126,8 @@ function createPhotoCard(photo) {
   if (photo.has_gps) badges += '<span class="badge-gps">📍</span>';
   if (photo.is_raw) badges += '<span class="badge-raw">RAW</span>';
   if (photo.starred) badges += '<span class="badge-star">⭐</span>';
+  if (photo.rating > 0) badges += `<span class="badge-rating">${Number(photo.rating)}★</span>`;
+  if (photo.color_label) badges += `<span class="badge-color ${escapeHtml(photo.color_label)}"></span>`;
 
   const thumbVersion = photo.edited_at ? encodeURIComponent(photo.edited_at) : '0';
   const thumbSrc = photo.thumb_path
@@ -155,6 +186,189 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function updateRatingControls(rating) {
+  document.querySelectorAll('#detail-rating button').forEach(button => {
+    button.classList.toggle('active', Number(button.dataset.rating) > 0 && Number(button.dataset.rating) <= Number(rating));
+  });
+}
+
+function updateColorControls(color) {
+  document.querySelectorAll('#detail-colors button').forEach(button => {
+    button.classList.toggle('active', button.dataset.color === color);
+  });
+}
+
+function syncCurrentPhotoCache(id, patch = {}) {
+  const knownPhoto = detailNavList.find(photo => photo.id === Number(id));
+  if (knownPhoto) Object.assign(knownPhoto, patch);
+  const card = document.querySelector(`.photo-card[data-id="${Number(id)}"]`);
+  if (!card) return;
+  if (Object.hasOwn(patch, 'starred')) {
+    let badge = card.querySelector('.badge-star');
+    if (patch.starred && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'badge-star';
+      badge.textContent = '⭐';
+      card.appendChild(badge);
+    } else if (!patch.starred && badge) badge.remove();
+  }
+  if (Object.hasOwn(patch, 'rating')) {
+    let badge = card.querySelector('.badge-rating');
+    const value = Number(patch.rating || 0);
+    if (value && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'badge-rating';
+      card.appendChild(badge);
+    }
+    if (badge) badge.textContent = value ? `${value}★` : '';
+    if (!value && badge) badge.remove();
+  }
+  if (Object.hasOwn(patch, 'color_label')) {
+    let badge = card.querySelector('.badge-color');
+    if (patch.color_label && !badge) {
+      badge = document.createElement('span');
+      badge.className = `badge-color ${patch.color_label}`;
+      card.appendChild(badge);
+    } else if (!patch.color_label && badge) badge.remove();
+    else if (badge) badge.className = `badge-color ${patch.color_label}`;
+  }
+}
+
+async function loadVersionOptions(photoId) {
+  const select = document.getElementById('version-select');
+  if (!select) return;
+  const versions = await api.getPhotoVersions(photoId);
+  select.innerHTML = '';
+  for (const version of versions) {
+    const option = document.createElement('option');
+    option.value = version.id;
+    option.textContent = `${version.version_type === 'original' ? '原图' : version.version_type}${version.is_active ? '（当前）' : ''} · ${new Date(version.created_at).toLocaleString()}`;
+    if (version.is_active) option.selected = true;
+    select.appendChild(option);
+  }
+}
+
+function bindDetailMetadataControls() {
+  document.querySelectorAll('#detail-rating button').forEach(button => {
+    button.addEventListener('click', async () => {
+      const id = Number(currentEditPhoto);
+      if (!id) return;
+      const rating = await api.setRating(id, button.dataset.rating);
+      updateRatingControls(rating);
+      syncCurrentPhotoCache(id, { rating });
+    });
+  });
+
+  document.querySelectorAll('#detail-colors button').forEach(button => {
+    button.addEventListener('click', async () => {
+      const id = Number(currentEditPhoto);
+      if (!id) return;
+      const colorLabel = await api.setColorLabel(id, button.dataset.color || '');
+      updateColorControls(colorLabel);
+      syncCurrentPhotoCache(id, { color_label: colorLabel });
+    });
+  });
+
+  document.getElementById('version-select').addEventListener('change', async event => {
+    const id = Number(currentEditPhoto);
+    const versionId = Number(event.target.value);
+    if (!id || !versionId) return;
+    const result = await api.activatePhotoVersion(id, versionId);
+    if (!result.ok) {
+      showToast(result.error || '版本切换失败');
+      return;
+    }
+    showToast('已切换显示版本', 'success');
+    await _openDetail(id);
+  });
+}
+
+// --- Task Center ---
+const TASK_TYPE_NAMES = {
+  scan: '扫描照片',
+  thumbnails: '修复缩略图',
+  watermark: '添加水印',
+  compression: '压缩照片',
+  'ai-tags': 'AI 标签'
+};
+const TASK_STATUS_NAMES = {
+  queued: '排队中',
+  running: '进行中',
+  paused: '已暂停',
+  done: '已完成',
+  error: '失败',
+  cancelled: '已取消'
+};
+let tasksRefreshing = false;
+
+async function refreshTasks() {
+  if (tasksRefreshing) return;
+  tasksRefreshing = true;
+  try {
+    const jobs = await api.jobList();
+    const list = document.getElementById('task-list');
+    if (!list) return;
+    if (!jobs.length) {
+      list.innerHTML = '<div class="task-empty">暂无任务</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const job of jobs) {
+      const item = document.createElement('div');
+      item.className = `task-item status-${job.status}`;
+      const percent = Number(job.progress || 0);
+      const total = Number(job.total || 0);
+      const controls = [];
+      if (['queued', 'running'].includes(job.status)) controls.push('<button data-action="pause">暂停</button>');
+      if (job.status === 'paused') controls.push('<button data-action="resume">继续</button>');
+      if (['queued', 'running', 'paused'].includes(job.status)) controls.push('<button data-action="cancel">取消</button>');
+      if (['error', 'cancelled'].includes(job.status)) controls.push('<button data-action="retry">重试</button>');
+      if (['done', 'error', 'cancelled'].includes(job.status)) controls.push('<button data-action="clear-one">移除</button>');
+
+      item.innerHTML = `
+        <div class="task-item-top">
+          <strong>${escapeHtml(TASK_TYPE_NAMES[job.type] || job.type)} #${job.id}</strong>
+          <span class="task-status ${job.status}">${TASK_STATUS_NAMES[job.status] || job.status}</span>
+        </div>
+        <div class="task-message">${escapeHtml(job.message || `${percent}%${total ? ` · 共 ${total} 项` : ''}`)}</div>
+        <div class="task-progress"><div class="task-progress-bar" style="width:${percent}%"></div></div>
+        ${job.errorText ? `<div class="task-error" title="${escapeHtml(job.errorText)}">${escapeHtml(job.errorText)}</div>` : ''}
+        <div class="task-controls">${controls.join('')}</div>
+      `;
+      item.querySelectorAll('[data-action]').forEach(button => {
+        button.addEventListener('click', async () => {
+          const action = button.dataset.action;
+          try {
+            if (action === 'clear-one') await api.jobRemove(job.id);
+            else await api[`job${action[0].toUpperCase()}${action.slice(1)}`](job.id);
+            await refreshTasks();
+          } catch (error) {
+            showToast(`任务操作失败：${error.message}`);
+          }
+        });
+      });
+      list.appendChild(item);
+    }
+  } catch (error) {
+    console.warn('Refresh tasks failed:', error);
+  } finally {
+    tasksRefreshing = false;
+  }
+}
+
+document.getElementById('btn-task-clear').addEventListener('click', async () => {
+  await api.jobClearFinished();
+  refreshTasks();
+});
+document.getElementById('btn-task-toggle').addEventListener('click', () => {
+  const panel = document.getElementById('task-center');
+  const collapsed = panel.classList.toggle('collapsed');
+  document.getElementById('btn-task-toggle').textContent = collapsed ? '▼' : '▲';
+});
+api.onJobsChanged(() => refreshTasks());
+setInterval(refreshTasks, 5000);
+refreshTasks();
+
 // --- Scan with options ---
 let scanFolderPath = null;
 
@@ -206,6 +420,17 @@ document.getElementById('filter-select').addEventListener('change', () => {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => loadPhotos(), 300);
 });
+
+new IntersectionObserver(entries => {
+  if (!entries[0].isIntersecting || currentView !== 'library') return;
+  appendPhotos({
+    sortBy: document.getElementById('sort-select')?.value || 'date_taken',
+    filter: document.getElementById('filter-select')?.value || '',
+    searchQuery: document.getElementById('search-input')?.value || '',
+    dateFrom: document.getElementById('date-from')?.value || '',
+    dateTo: document.getElementById('date-to')?.value || ''
+  });
+}, { rootMargin: '600px' }).observe(document.getElementById('infinite-sentinel'));
 let sortDebounce;
 document.getElementById('sort-select').addEventListener('change', () => {
   clearTimeout(sortDebounce);
@@ -217,10 +442,10 @@ async function initMap() {
   if (photoMap) { photoMap.invalidateSize(); return; }
 
   photoMap = L.map('map-canvas').setView([30, 110], 4);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  L.tileLayer('maptile://tiles/{z}/{y}/{x}', {
     attribution: 'Esri, HERE, Garmin',
     maxZoom: 16,
-    keepBuffer: 6,
+    keepBuffer: 8,
     updateWhenIdle: false,
     updateWhenZooming: false,
     errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
@@ -432,6 +657,21 @@ async function _openDetail(id) {
     metaList.appendChild(dd);
   }
 
+  if (detail.has_gps) {
+    const locationDt = document.createElement('dt');
+    const locationDd = document.createElement('dd');
+    locationDt.textContent = '位置';
+    locationDd.textContent = '解析中...';
+    metaList.append(locationDt, locationDd);
+    api.reverseGeocode(detail.gps_lat, detail.gps_lon).then(location => {
+      if (isDetailCurrent(token, id) && location.displayName) {
+        locationDd.textContent = location.displayName;
+      }
+    }).catch(() => {
+      if (isDetailCurrent(token, id)) locationDd.textContent = '无法获取位置名称';
+    });
+  }
+
   // Tags
   const tagsInput = document.getElementById('detail-tags-input');
   tagsInput.value = detail.tags || '';
@@ -440,6 +680,9 @@ async function _openDetail(id) {
   // Populate GPS inputs
   document.getElementById('gps-lat-input').value = detail.has_gps ? detail.gps_lat.toFixed(6) : '';
   document.getElementById('gps-lon-input').value = detail.has_gps ? detail.gps_lon.toFixed(6) : '';
+  updateRatingControls(detail.rating || 0);
+  updateColorControls(detail.color_label || '');
+  loadVersionOptions(id);
 
   const savedEdit = (() => { try { return JSON.parse(detail.edit_settings || 'null'); } catch { return null; } })();
   const applySavedEdit = () => {
@@ -735,22 +978,9 @@ document.getElementById('btn-batch-ai-tag').addEventListener('click', async () =
   const ids = [...selectedIds];
   if (!ids.length) return;
   const btn = document.getElementById('btn-batch-ai-tag');
-  btn.disabled = true;
-  btn.textContent = '处理中...';
-
-  api.onAiTagProgress(data => {
-    btn.textContent = `处理中 ${data.processed}/${data.total}`;
-  });
-
-  const result = await api.aiTagBatch(ids);
-  btn.disabled = false;
-  btn.textContent = '✨ 批量 AI 标签';
-  if (result.ok) {
-    showToast(`完成！成功 ${result.success} 张，失败 ${result.failed} 张`);
-    loadPhotos();
-  } else {
-    showToast(result.error);
-  }
+  await api.jobStart('ai-tags', { ids });
+  showToast(`已创建 AI 标签任务（${ids.length} 张）`);
+  void btn;
 });
 
 document.getElementById('btn-close-batch-edit').addEventListener('click', () => {
@@ -790,30 +1020,17 @@ async function applyWatermarks(ids, source = 'batch') {
     document.getElementById('btn-apply-watermark'),
     document.getElementById('btn-batch-watermark')
   ].filter(Boolean);
-  const originalTexts = buttons.map(button => button.textContent);
   watermarkBusy = true;
-  buttons.forEach(button => { button.disabled = true; });
-  buttons.forEach(button => { button.textContent = `加水印 0/${targets.length}`; });
-
   try {
-    const result = await api.applyWatermark(targets);
-    if (result.ok) {
-      showToast(`已为 ${result.done} 张照片添加水印，原图未修改`, 'success');
-      selectedIds.clear();
-      document.querySelectorAll('.photo-card.selected').forEach(card => card.classList.remove('selected'));
-      updateBatchBar();
-    } else {
-      showToast(result.error || `完成：成功 ${result.done || 0} 张，失败 ${result.failed || 0} 张`);
-    }
-    loadPhotos();
+    await api.jobStart('watermark', { ids: targets });
+    showToast(`水印任务已加入队列（${targets.length} 张），原图不会修改`);
+    if (source === 'batch') selectedIds.clear();
+    updateBatchBar();
   } catch (error) {
-    showToast('添加水印失败：' + error.message);
+    showToast('创建水印任务失败：' + error.message);
   } finally {
     watermarkBusy = false;
-    buttons.forEach((button, index) => {
-      button.disabled = false;
-      button.textContent = originalTexts[index];
-    });
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 
@@ -846,37 +1063,23 @@ async function applyCompressions(ids, source = 'batch') {
     document.getElementById('btn-apply-compression'),
     document.getElementById('btn-compress-photo')
   ].filter(Boolean);
-  const originalTexts = buttons.map(button => button.textContent);
   compressionBusy = true;
-  buttons.forEach(button => {
-    button.disabled = true;
-    button.textContent = `压缩 0/${targets.length}`;
-  });
-
   try {
-    const result = await api.applyCompression(targets, compressionOptions());
+    await api.jobStart('compression', { ids: targets, options: compressionOptions() });
     api.saveAppSetting('compressionOptions', JSON.stringify(compressionOptions()));
-    if (result.ok) {
-      showToast(`已生成 ${result.done} 张压缩副本，原图未修改`, 'success');
-      if (source === 'batch') {
-        selectedIds.clear();
-        document.querySelectorAll('.photo-card.selected').forEach(card => card.classList.remove('selected'));
-        updateBatchBar();
-      }
-      loadPhotos();
-    } else {
-      showToast(result.error || `完成：成功 ${result.done || 0} 张，失败 ${result.failed || 0} 张`);
+    showToast(`压缩任务已加入队列（${targets.length} 张），原图不会修改`);
+    if (source === 'batch') {
+      selectedIds.clear();
+      document.querySelectorAll('.photo-card.selected').forEach(card => card.classList.remove('selected'));
     }
-    return result;
+    updateBatchBar();
+    return { ok: true };
   } catch (error) {
     showToast('压缩失败：' + error.message);
     return { ok: false, error: error.message };
   } finally {
     compressionBusy = false;
-    buttons.forEach((button, index) => {
-      button.disabled = false;
-      button.textContent = originalTexts[index];
-    });
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 
@@ -1331,11 +1534,56 @@ async function loadStatistics() {
     col.append(value, bar, label);
     chart.appendChild(col);
   }
-  // Camera list
-  const camDiv = document.getElementById('stats-cameras');
-  camDiv.innerHTML = '';
-  for (const [name, count] of stats.cameras) {
-    camDiv.innerHTML += '<div class="cam-row"><span>' + name + '</span><span>' + count + ' 张</span></div>';
+  renderStatRows('stats-cameras', stats.cameras, '暂无相机信息');
+  renderStatRows('stats-lenses', stats.lenses, '暂无镜头信息');
+  renderFocalChart(stats.focalLengths || []);
+  renderStatRows('stats-apertures', stats.apertures, '暂无光圈信息');
+  renderLocationRows(stats.locations || []);
+}
+
+function renderStatRows(containerId, rows, emptyText) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (!rows?.length) {
+    container.innerHTML = `<p class="stats-empty">${escapeHtml(emptyText)}</p>`;
+    return;
+  }
+  for (const [name, count] of rows) {
+    container.innerHTML += `<div class="cam-row"><span>${escapeHtml(name || '未知')}</span><span>${Number(count).toLocaleString()} 张</span></div>`;
+  }
+}
+
+function renderFocalChart(rows) {
+  const chart = document.getElementById('stats-focal-lengths');
+  chart.innerHTML = '';
+  if (!rows.length) {
+    chart.innerHTML = '<p class="stats-empty">没有焦距数据</p>';
+    return;
+  }
+  const maxCount = Math.max(...rows.map(([, count]) => Number(count)), 1);
+  for (const [focal, count] of rows) {
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+    col.title = `${focal}mm：${count} 张`;
+    col.innerHTML = `
+      <div class="bar-value">${count}</div>
+      <div class="bar-rect" style="height:${Math.max(4, Math.round(count / maxCount * 110))}px"></div>
+      <div class="bar-label">${focal}mm</div>
+    `;
+    chart.appendChild(col);
+  }
+}
+
+function renderLocationRows(rows) {
+  const container = document.getElementById('stats-locations');
+  container.innerHTML = '';
+  if (!rows.length) {
+    container.innerHTML = '<p class="stats-empty">没有 GPS 位置聚合</p>';
+    return;
+  }
+  for (const [location, count] of rows) {
+    const [lat, lon] = String(location).split(',');
+    container.innerHTML += `<div class="cam-row"><span title="${lat}, ${lon}">${lat}°, ${lon}° 附近</span><span>${Number(count).toLocaleString()} 张</span></div>`;
   }
 }
 
@@ -1723,6 +1971,7 @@ document.addEventListener("click", function(e) {
 
 
 // --- Init ---
+bindDetailMetadataControls();
 restoreSettings().then(() => {
   updateStats();
 });

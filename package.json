@@ -9,7 +9,41 @@
   ],
   "license": "MIT",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "lint": "node --check main.js && node --check preload.js && node --check src/database.js && node --check src/job-manager.js && node --check src/logger.js && node --check src/metadata.js && node --check src/image-utils.js && node --check renderer/app.js",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1",
+    "package": "electron-builder --win --publish never",
+    "verify": "npm run lint && npm test"
+  },
+  "build": {
+    "appId": "com.blueicx.phonebl",
+    "productName": "PhoneBL",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
+      "node_modules/exiftool-vendored/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "dependencies": {
     "exifr": "^7.1.3",
@@ -17,6 +51,7 @@
     "sharp": "^0.35.3"
   },
   "devDependencies": {
-    "electron": "^41.10.7"
+    "electron": "^41.10.7",
+    "electron-builder": "^26.15.3"
   }
 }

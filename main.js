@@ -5,6 +5,8 @@ const fsp = fs.promises;
 const { openPhotoDatabase } = require('./src/database');
 const { JobManager } = require('./src/job-manager');
 const { applyMetadataPolicy } = require('./src/metadata');
+const { orientationTransform } = require('./src/image-utils');
+const { createLogger } = require('./src/logger');
 const exifr = require('exifr');
 const sharp = require('sharp');
 const crypto = require('crypto');
@@ -12,6 +14,7 @@ const crypto = require('crypto');
 let db = null;
 let mainWindow = null;
 let jobManager = null;
+const logger = createLogger(path.join(__dirname, 'data', 'logs', 'main.log'));
 
 const DB_PATH = path.join(__dirname, 'data', 'photos.db');
 const THUMB_DIR = path.join(__dirname, 'data', 'thumbs');
@@ -42,20 +45,6 @@ async function ensureDirs() {
     await fsp.mkdir(DISPLAY_DIR, { recursive: true });
   await fsp.mkdir(WATERMARK_ASSET_DIR, { recursive: true });
   await fsp.mkdir(MAP_TILE_DIR, { recursive: true });
-}
-
-function orientationTransform(pipeline, orientation = 1) {
-  const value = Number(orientation) || 1;
-  switch (value) {
-    case 2: return pipeline.flop();
-    case 3: return pipeline.rotate(180);
-    case 4: return pipeline.rotate(180).flop();
-    case 5: return pipeline.rotate(270).flop();
-    case 6: return pipeline.rotate(90);
-    case 7: return pipeline.rotate(90).flop();
-    case 8: return pipeline.rotate(270);
-    default: return pipeline;
-  }
 }
 
 async function savePhotoVersion(photoId, versionType, versionPath, settings = {}, engine = 'phonebl') {
@@ -1316,23 +1305,31 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
   mainWindow.webContents.on('console-message', (e) => {
     const { level, message, lineNumber, sourceId } = e;
     if (level >= 1) console.log(`[R${level}] ${message} @${sourceId}:${lineNumber}`);
+    if (level === 3) logger.error(message, { sourceId, lineNumber });
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
 app.whenReady().then(async () => {
+  process.on('uncaughtException', error => logger.error('uncaughtException', { stack: error.stack }));
+  process.on('unhandledRejection', reason => logger.error('unhandledRejection', { stack: reason?.stack || String(reason) }));
   await ensureDirs();
   await initDb();
   registerProtocolHandlers();
-  jobManager = createJobManager(db, mainWindow, jobHandlers());
+  jobManager = new JobManager(db, mainWindow, jobHandlers());
   createWindow();
   jobManager.loadQueuedJobs();
+}).catch(error => {
+  logger.error('Application startup failed', { stack: error.stack });
+  dialog.showErrorBox('PhoneBL 启动失败', error.message);
+  app.exit(1);
 });
 
 app.on('window-all-closed', async () => {
@@ -2440,6 +2437,10 @@ ipcMain.handle('job-resume', (event,id) => jobManager.resume(id));
 ipcMain.handle('job-cancel', (event,id) => jobManager.cancel(id));
 ipcMain.handle('job-retry', (event,id) => jobManager.retry(id));
 ipcMain.handle('job-clear-finished', () => jobManager.clearFinished());
+ipcMain.handle('job-remove', (event, id) => {
+  db.run("DELETE FROM jobs WHERE id = ? AND status IN ('done','cancelled','error')", [Number(id)]);
+  return true;
+});
 
 let lastGeocodeAt = 0;
 ipcMain.handle('reverse-geocode', async (event, lat, lon) => {

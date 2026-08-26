@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: maptile: https:; connect-src 'self' https:; font-src 'self' data:">
   <title>MAP - 照片地图</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="lib/leaflet.css" />
@@ -65,6 +66,9 @@
             <option value="raw">RAW格式</option>
             <option value="jpg">仅JPG</option>
             <option value="starred">已标星</option>
+            <option value="1">1星及以上</option>
+            <option value="3">3星及以上</option>
+            <option value="5">5星</option>
           </select>
           <input type="date" id="date-from" title="起始日期" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" />
           <span style="color:var(--text-secondary);font-size:12px">至</span>
@@ -99,6 +103,7 @@
         <div id="empty-state" class="empty-state hidden">
           <p>还没有照片，点击上方按钮扫描文件夹</p>
         </div>
+        <div id="infinite-sentinel" class="infinite-sentinel"></div>
       </section>
 
       <!-- Map View -->
@@ -173,6 +178,14 @@
           <div id="stats-monthly" class="stats-chart"></div>
           <h3>相机分布</h3>
           <div id="stats-cameras"></div>
+          <h3>镜头分布</h3>
+          <div id="stats-lenses"></div>
+          <h3>焦段分布</h3>
+          <div id="stats-focal-lengths" class="stats-chart"></div>
+          <h3>光圈分布</h3>
+          <div id="stats-apertures"></div>
+          <h3>常用位置</h3>
+          <div id="stats-locations"></div>
         </div>
       </section>
     </main>
@@ -192,6 +205,19 @@
           <button id="btn-close-detail" class="btn-icon">✕</button>
         </div>
         <dl id="detail-metadata" class="metadata-list"></dl>
+        <div class="detail-section">
+          <label>评分与色标</label>
+          <div class="rating-row" id="detail-rating">
+            <button data-rating="0">清除</button>
+            <button data-rating="1">1</button><button data-rating="2">2</button>
+            <button data-rating="3">3</button><button data-rating="4">4</button><button data-rating="5">5</button>
+          </div>
+          <div class="color-row" id="detail-colors">
+            <button data-color="" title="清除色标">×</button>
+            <button data-color="red" class="red"></button><button data-color="yellow" class="yellow"></button>
+            <button data-color="green" class="green"></button><button data-color="blue" class="blue"></button>
+          </div>
+        </div>
         <div id="detail-tags-section">
           <label>标签</label>
           <div id="quick-tags" class="quick-tags"></div>
@@ -232,6 +258,10 @@
         <div id="similar-photos-section">
           <label>相似照片</label>
           <div id="similar-grid" class="mini-grid"></div>
+        </div>
+        <div class="detail-section">
+          <label>版本</label>
+          <select id="version-select"><option>原图</option></select>
         </div>
         <div class="modal-actions">
           <button id="btn-open-file" class="btn-secondary">打开文件</button>
@@ -400,7 +430,8 @@
     <div class="ctx-item" data-action="locate">📂 定位所在文件夹</div>
     <div class="ctx-sep"></div>
     <div class="ctx-item ctx-danger" data-action="delete-lib">🗑 从照片库删除</div>
-    <div class="ctx-item ctx-danger" data-action="delete-disk">💥 从磁盘永久删除</div>
+    <div class="ctx-item ctx-danger" data-action="delete-disk">🗑 删除并移入回收站</div>
+    <div class="ctx-item ctx-danger" data-action="delete-permanent">💥 永久删除</div>
   </div>
 
   <!-- Slideshow -->
@@ -412,6 +443,17 @@
 
   <!-- Toast Container -->
   <div id="toast-container"></div>
+  <pre id="js-error-banner" class="js-error-banner" style="display:none"></pre>
+  <div id="task-center" class="task-center">
+    <div class="task-header">
+      <strong>任务中心</strong>
+      <div class="task-header-actions">
+        <button id="btn-task-clear" title="清除已完成">清空</button>
+        <button id="btn-task-toggle" title="收起/展开">▲</button>
+      </div>
+    </div>
+    <div id="task-list" class="task-list"><div class="task-empty">暂无任务</div></div>
+  </div>
 
   <!-- Drop Overlay -->
   <div id="drop-overlay" class="drop-overlay hidden">📁 松开鼠标扫描此文件夹</div>
@@ -426,23 +468,10 @@
   </div>
 
   <script src="lib/markercluster.js"></script>
+  <script src="error.js"></script>
   <link rel="stylesheet" href="lib/MarkerCluster.css" />
   <link rel="stylesheet" href="lib/MarkerCluster.Default.css" />
   <script src="app.js"></script>
-  <script>
-    window.addEventListener('error', function(e) {
-      var el = document.getElementById('js-error-banner');
-      el.style.display = 'block';
-      el.textContent += 'ERROR: ' + e.message + ' @ ' + (e.filename||'') + ':' + e.lineno + '\n';
-      el.title = '点击复制错误信息';
-      el.onclick = function() { navigator.clipboard.writeText(el.textContent); };
-    });
-    window.addEventListener('unhandledrejection', function(e) {
-      var el = document.getElementById('js-error-banner');
-      el.style.display = 'block';
-      el.textContent += 'REJECTION: ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n';
-    });
-  </script>
 </body>
 </html>
 
