@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "Open-source photo manager with map, AI tagging, and timeline",
   "main": "main.js",
+  "author": "吴家希（WJX） <51323404+blueicx@users.noreply.github.com> (https://github.com/blueicx)",
+  "contributors": [
+    "吴家希（WJX） <51323404+blueicx@users.noreply.github.com> (https://github.com/blueicx)"
+  ],
+  "license": "MIT",
   "scripts": {
     "start": "electron ."
   },

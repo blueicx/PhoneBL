@@ -49,6 +49,15 @@ data/              本地运行时数据，不入库
 
 Copyright (c) 2026 吴家希（WJX）
 
+### 作者
+
+- **吴家希（WJX）** — [GitHub](https://github.com/blueicx)
+
+### 贡献者
+
+- [吴家希（WJX）](https://github.com/blueicx) — 项目作者
+- 其他贡献者将通过 GitHub 提交记录自动展示。
+
 ## English
 
 PhoneBL is a local-first photo manager for travel photography. It provides library browsing, map-based organization, batch tools, AI tagging, watermarks, compression, lightweight editing, and a slideshow mode. The app is built with Electron and keeps photo files on your machine.
@@ -95,3 +104,12 @@ data/              Local runtime data, not committed
 Released under the [MIT License](LICENSE).
 
 Copyright (c) 2026 吴家希（WJX）
+
+### Author
+
+- **吴家希（WJX）** — [GitHub](https://github.com/blueicx)
+
+### Contributors
+
+- [吴家希（WJX）](https://github.com/blueicx) — project author
+- Additional contributors will be shown automatically from Git history.
