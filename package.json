@@ -1,0 +1,15 @@
+{
+  "name": "phonebl",
+  "version": "1.0.0",
+  "description": "Open-source photo manager with map, AI tagging, and timeline",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^41.7.1",
+    "exifr": "^7.1.3",
+    "sharp": "^0.35.3",
+    "sql.js": "^1.14.2"
+  }
+}

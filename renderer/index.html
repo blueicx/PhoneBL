@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAP - 照片地图</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="lib/leaflet.css" />
+  <script src="lib/leaflet.js"></script>
+</head>
+<body>
+  <div id="titlebar">
+    <div class="titlebar-left">
+      <span class="app-icon">🗺</span>
+      <span class="app-name">MAP</span>
+    </div>
+    <div class="window-controls">
+      <button id="btn-minimize" title="最小化">─</button>
+      <button id="btn-maximize" title="最大化">□</button>
+      <button id="btn-close" class="close-btn" title="关闭">✕</button>
+    </div>
+  </div>
+
+  <div id="app">
+    <aside id="sidebar">
+      <nav>
+        <button class="nav-item active" data-view="library" title="照片库">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          <span>照片库</span>
+        </button>
+        <button class="nav-item" data-view="map" title="地图">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+          <span>地图</span>
+        </button>
+        <button class="nav-item" data-view="timeline" title="时间线">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>时间线</span>
+        </button>
+        <button class="nav-item" data-view="search" title="搜索">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span>搜索</span>
+        </button>
+        <button class="nav-item" data-view="settings" title="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>设置</span>
+        </button>
+        <button class="nav-item" data-view="stats" title="统计">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>统计</span>
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="stat-total" class="stat-chip">— 张照片</div>
+      </div>
+    </aside>
+
+    <main id="main-content">
+      <!-- Library View -->
+      <section id="view-library" class="view active">
+        <div class="toolbar">
+          <input type="text" id="search-input" placeholder="搜索文件名、标签、日期..." />
+          <select id="filter-select">
+            <option value="">全部照片</option>
+            <option value="gps">有GPS</option>
+            <option value="raw">RAW格式</option>
+            <option value="jpg">仅JPG</option>
+            <option value="starred">已标星</option>
+          </select>
+          <input type="date" id="date-from" title="起始日期" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" />
+          <span style="color:var(--text-secondary);font-size:12px">至</span>
+          <input type="date" id="date-to" title="结束日期" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" />
+          <select id="sort-select">
+            <option value="date_taken">按日期</option>
+            <option value="filename">按文件名</option>
+            <option value="size">按大小</option>
+          </select>
+          <div class="zoom-controls">
+            <button id="btn-zoom-out" title="缩小">−</button>
+            <button id="btn-zoom-in" title="放大">＋</button>
+          </div>
+          <button id="btn-scan-folder" class="btn-primary">扫描文件夹</button>
+          <div class="toolbar-more">
+            <button id="btn-more-menu" class="btn-secondary" title="更多操作">⋯</button>
+            <div class="more-dropdown hidden" id="more-dropdown">
+              <div class="ctx-item" id="btn-fix-thumbs">🔧 修复缩略图</div>
+              <div class="ctx-item" id="btn-slideshow">▶ 幻灯片放映</div>
+              <div class="ctx-item" id="btn-export">📤 导出相册</div>
+              <div class="ctx-item" id="btn-batch-edit">🎨 批量 LR 预设</div>
+              <div class="ctx-item" id="btn-batch-watermark">💧 批量加水印</div>
+              <div class="ctx-item" id="btn-rename">✏️ 批量重命名</div>
+              <div class="ctx-item" id="btn-bursts">🔍 连拍检测</div>
+              <div class="ctx-sep"></div>
+              <div class="ctx-item ctx-danger" id="btn-recycle">🗑 回收站</div>
+            </div>
+          </div>
+        </div>
+        <div id="scan-status" class="scan-status hidden"></div>
+        <div id="photo-grid" class="photo-grid"></div>
+        <div id="empty-state" class="empty-state hidden">
+          <p>还没有照片，点击上方按钮扫描文件夹</p>
+        </div>
+      </section>
+
+      <!-- Map View -->
+      <section id="view-map" class="view">
+        <div id="map-canvas"></div>
+      </section>
+
+      <!-- Timeline View -->
+      <section id="view-timeline" class="view">
+        <div id="timeline-container"><p>时间线视图加载中...</p></div>
+      </section>
+
+      <!-- Search View -->
+      <section id="view-search" class="view">
+        <div class="toolbar">
+          <input type="text" id="adv-search-input" placeholder="输入关键词搜索全部照片..." />
+        </div>
+        <div id="search-results" class="photo-grid"></div>
+      </section>
+
+      <!-- Settings View -->
+      <section id="view-settings" class="view">
+        <h2>设置</h2>
+        <div class="settings-group">
+          <label>Gemini API Key（用于 AI 场景识别）</label>
+          <div class="key-row">
+            <input type="password" id="gemini-key-input" placeholder="AIza..." />
+            <button id="btn-save-gemini" class="btn-primary">保存</button>
+          </div>
+          <p class="hint">免费额度每天1500次请求。前往 aistudio.google.com 获取。</p>
+        </div>
+        <div class="settings-group">
+          <label>水印</label>
+          <div class="watermark-card">
+            <div id="watermark-preview" class="watermark-preview"><span>未导入水印</span></div>
+            <div class="key-row">
+              <button id="btn-import-watermark" class="btn-primary">一键导入水印</button>
+              <button id="btn-remove-watermark" class="btn-secondary" disabled>移除</button>
+            </div>
+            <p class="hint">建议使用透明 PNG。添加水印会生成照片副本，不修改原图。</p>
+          </div>
+        </div>
+        <div class="settings-group">
+          <label>压缩</label>
+          <div class="compression-card">
+            <div class="compression-row">
+              <span>画质</span>
+              <input type="range" id="compression-quality" min="45" max="95" value="82" />
+              <span id="compression-quality-value">82%</span>
+            </div>
+            <div class="compression-row">
+              <span>最长边</span>
+              <select id="compression-max-edge">
+                <option value="6144">6144 px</option>
+                <option value="4096" selected>4096 px</option>
+                <option value="2560">2560 px</option>
+                <option value="1920">1920 px</option>
+                <option value="0">保持原尺寸</option>
+              </select>
+            </div>
+            <p class="hint">压缩会生成 JPEG 副本并显示在图库中，原图不会修改。重复压缩不会叠加损失。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Statistics View -->
+      <section id="view-stats" class="view">
+        <div style="padding:30px">
+          <h2>统计</h2>
+          <div id="stats-summary" class="stats-cards"></div>
+          <h3>每月拍摄量</h3>
+          <div id="stats-monthly" class="stats-chart"></div>
+          <h3>相机分布</h3>
+          <div id="stats-cameras"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Photo Detail Modal -->
+  <div id="photo-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-image-panel">
+        <button class="detail-nav detail-prev" title="上一张">‹</button>
+        <img id="detail-img" src="" alt="" />
+        <button class="detail-nav detail-next" title="下一张">›</button>
+      </div>
+      <div class="modal-info-panel">
+        <div class="modal-header">
+          <h3 id="detail-filename"></h3>
+          <button id="btn-close-detail" class="btn-icon">✕</button>
+        </div>
+        <dl id="detail-metadata" class="metadata-list"></dl>
+        <div id="detail-tags-section">
+          <label>标签</label>
+          <div id="quick-tags" class="quick-tags"></div>
+          <input type="text" id="detail-tags-input" placeholder="用逗号分隔多个标签" />
+          <button id="btn-save-tags" class="btn-secondary">保存标签</button>
+          <button id="btn-ai-tag" class="btn-primary" style="margin-top:8px;width:100%">✨ AI 自动打标签</button>
+          <div style="margin-top:12px">
+            <label style="font-size:11px;color:var(--text-secondary)">GPS 坐标修正</label>
+            <div style="display:flex;gap:6px;margin-top:4px">
+              <input type="number" id="gps-lat-input" placeholder="纬度" step="any" style="flex:1;padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-size:12px" />
+              <input type="number" id="gps-lon-input" placeholder="经度" step="any" style="flex:1;padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-size:12px" />
+            </div>
+            <button id="btn-save-gps" class="btn-secondary" style="margin-top:6px;width:100%;font-size:12px">📍 保存坐标</button>
+          </div>
+        </div>
+        <div id="preset-edit-section" class="detail-section">
+          <label>LR 预设轻修图</label>
+          <div class="preset-row">
+            <select id="preset-select"><option value="">先导入预设</option></select>
+            <button id="btn-import-preset" class="btn-secondary" title="导入 XMP / lrtemplate">导入</button>
+          </div>
+          <div class="strength-row">
+            <span>强度</span>
+            <input type="range" id="preset-strength" min="0" max="200" value="100" />
+            <span id="preset-strength-value">100%</span>
+          </div>
+          <div class="edit-actions">
+            <button id="btn-preset-preview" class="btn-secondary">预览</button>
+            <button id="btn-preset-save" class="btn-primary">应用</button>
+          </div>
+          <div class="edit-actions">
+            <button id="btn-preset-reset" class="btn-secondary">还原原图</button>
+            <button id="btn-compress-photo" class="btn-secondary">压缩副本</button>
+            <button id="btn-preset-export" class="btn-secondary">导出副本</button>
+          </div>
+          <p class="hint">原始文件不会改动。Lightroom 相机配置文件、HSL 和色调曲线只能近似还原。</p>
+        </div>
+        <div id="similar-photos-section">
+          <label>相似照片</label>
+          <div id="similar-grid" class="mini-grid"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-open-file" class="btn-secondary">打开文件</button>
+          <button id="btn-show-folder" class="btn-secondary">所在文件夹</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox-overlay hidden">
+    <button class="lb-btn lb-close">✕</button>
+    <button class="lb-btn lb-prev">‹</button>
+    <img id="lightbox-img" src="" alt="" />
+    <button class="lb-btn lb-next">›</button>
+    <div class="lb-caption">
+      <span id="lb-filename"></span>
+      <span id="lb-counter"></span>
+    </div>
+  </div>
+
+  <!-- Batch Toolbar -->
+  <div id="batch-bar" class="batch-bar hidden">
+    <span id="batch-count"></span>
+    <button id="btn-batch-select-all">全选</button>
+    <button id="btn-batch-clear">取消选择</button>
+    <button id="btn-batch-ai-tag" class="accent">✨ 批量 AI 标签</button>
+    <button id="btn-batch-star">⭐ 标星</button>
+    <button id="btn-apply-watermark" class="accent">💧 一键加水印</button>
+    <button id="btn-apply-compression" class="accent">🗜 一键压缩</button>
+    <button id="btn-batch-soft-del">🗑 回收站</button>
+  </div>
+
+  <!-- Batch Preset Modal -->
+  <div id="batch-edit-modal" class="modal-overlay hidden">
+    <div class="edit-modal-content">
+      <h3>批量应用 Lightroom 预设</h3>
+      <select id="batch-preset-select"></select>
+      <div class="strength-row">
+        <span>强度</span>
+        <input type="range" id="batch-edit-strength" min="0" max="200" value="100" />
+        <span id="batch-strength-value">100%</span>
+      </div>
+      <div class="edit-progress hidden" id="batch-edit-progress"></div>
+      <div class="edit-actions">
+        <button id="btn-close-batch-edit" class="btn-secondary">关闭</button>
+        <button id="btn-apply-batch-edit" class="btn-primary">开始应用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Rename Modal -->
+  <div id="rename-modal" class="modal-overlay hidden">
+    <div class="rename-modal-content">
+      <div class="rename-head">
+        <h3>批量重命名</h3>
+        <span id="rename-count" class="rename-count">0 张</span>
+      </div>
+
+      <div class="form-grid">
+        <label>预设
+          <select id="rename-preset">
+            <option value="{date}_{seq}">日期 + 序号</option>
+            <option value="{YYYY}-{MM}-{DD}_{HH}{mm}{ss}">拍摄时间</option>
+            <option value="{camera}_{date}_{seq}">相机 + 日期</option>
+            <option value="{folder}_{orig}">文件夹 + 原名</option>
+            <option value="custom">自定义模板</option>
+          </select>
+        </label>
+        <label>排序
+          <select id="rename-sort">
+            <option value="selection">当前选择顺序</option>
+            <option value="date_asc">拍摄时间早到晚</option>
+            <option value="date_desc">拍摄时间晚到早</option>
+            <option value="filename">文件名</option>
+          </select>
+        </label>
+        <label>命名模板
+          <input id="rename-template" type="text" value="{date}_{seq}" spellcheck="false" />
+        </label>
+        <label>日期来源
+          <select id="rename-date-source">
+            <option value="taken">拍摄日期</option>
+            <option value="modified">修改日期</option>
+            <option value="today">今天</option>
+          </select>
+        </label>
+        <label>起始序号
+          <input id="rename-start" type="number" min="0" max="999999" value="1" />
+        </label>
+        <label>序号位数
+          <select id="rename-padding">
+            <option value="0">不补零</option>
+            <option value="2">2 位</option>
+            <option value="3">3 位</option>
+            <option value="4" selected>4 位</option>
+            <option value="5">5 位</option>
+          </select>
+        </label>
+        <label>名称大小写
+          <select id="rename-case">
+            <option value="original">保持原样</option>
+            <option value="lower">全部小写</option>
+            <option value="upper">全部大写</option>
+          </select>
+        </label>
+        <label>扩展名
+          <select id="rename-ext-case">
+            <option value="original">保持原样</option>
+            <option value="lower">小写</option>
+            <option value="upper">大写</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="rename-inline">
+        <label class="toggle-row">
+          <input type="checkbox" id="rename-spaces" checked />
+          <span>空格转为下划线</span>
+        </label>
+        <label class="toggle-row">
+          <input type="checkbox" id="rename-conflict-suffix" checked />
+          <span>同名自动加序号</span>
+        </label>
+      </div>
+
+      <div class="rename-preview-head">
+        <span>预览</span>
+        <span id="rename-preview-summary"></span>
+      </div>
+      <div id="rename-preview-list" class="rename-preview-list"></div>
+      <p class="rename-token-hint">{date} {time} {datetime} {seq} {n} {orig} {camera} {folder} {id}</p>
+
+      <div class="edit-actions">
+        <button id="btn-close-rename" class="btn-secondary">取消</button>
+        <button id="btn-apply-rename" class="btn-primary">执行重命名</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan Options Modal -->
+  <div id="scan-modal" class="modal-overlay hidden">
+    <div class="scan-modal-content">
+      <h3>扫描设置</h3>
+      <div class="scan-option">
+        <label class="toggle-row">
+          <input type="checkbox" id="chk-include-raw" checked />
+          <span>包含 RAW 格式（NEF/CR2/ARW 等）</span>
+        </label>
+        <p class="hint">RAW 文件较大，缩略图从内嵌预览提取，首次扫描会慢一些</p>
+      </div>
+      <div class="scan-actions">
+        <button id="btn-scan-cancel" class="btn-secondary">取消</button>
+        <button id="btn-scan-start" class="btn-primary">开始扫描</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="ctx-menu" class="ctx-menu hidden">
+    <div class="ctx-item" data-action="open">打开详情</div>
+    <div class="ctx-item" data-action="star">⭐ 标星 / 取消标星</div>
+    <div class="ctx-item" data-action="watermark">💧 添加水印</div>
+    <div class="ctx-item" data-action="compress">🗜 压缩副本</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" data-action="locate">📂 定位所在文件夹</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item ctx-danger" data-action="delete-lib">🗑 从照片库删除</div>
+    <div class="ctx-item ctx-danger" data-action="delete-disk">💥 从磁盘永久删除</div>
+  </div>
+
+  <!-- Slideshow -->
+  <div id="slideshow-overlay" class="lightbox-overlay hidden">
+    <img id="slideshow-img" src="" alt="" />
+    <button class="lb-btn lb-close" onclick="stopSlideshow()">✕</button>
+    <div class="lb-caption"><span>幻灯片放映中 — 空格暂停/继续，Esc 退出</span></div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Drop Overlay -->
+  <div id="drop-overlay" class="drop-overlay hidden">📁 松开鼠标扫描此文件夹</div>
+
+  <!-- Recycle Bin -->
+  <div id="recycle-modal" class="modal-overlay hidden">
+    <div style="background:var(--bg-secondary);border-radius:14px;padding:24px;width:600px;max-height:80vh;overflow-y:auto">
+      <h3>🗑 回收站</h3>
+      <div id="recycle-list"></div>
+      <button class="btn-secondary" onclick="document.getElementById('recycle-modal').classList.add('hidden')" style="margin-top:16px">关闭</button>
+    </div>
+  </div>
+
+  <script src="lib/markercluster.js"></script>
+  <link rel="stylesheet" href="lib/MarkerCluster.css" />
+  <link rel="stylesheet" href="lib/MarkerCluster.Default.css" />
+  <script src="app.js"></script>
+  <script>
+    window.addEventListener('error', function(e) {
+      var el = document.getElementById('js-error-banner');
+      el.style.display = 'block';
+      el.textContent += 'ERROR: ' + e.message + ' @ ' + (e.filename||'') + ':' + e.lineno + '\n';
+      el.title = '点击复制错误信息';
+      el.onclick = function() { navigator.clipboard.writeText(el.textContent); };
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      var el = document.getElementById('js-error-banner');
+      el.style.display = 'block';
+      el.textContent += 'REJECTION: ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n';
+    });
+  </script>
+</body>
+</html>
+
+
