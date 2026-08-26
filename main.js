@@ -22,7 +22,7 @@ const PREVIEW_DIR = path.join(__dirname, 'data', 'previews');
 const EDIT_DIR = path.join(__dirname, 'data', 'edited');
 const DISPLAY_DIR = path.join(__dirname, 'data', 'displays');
 const WATERMARK_ASSET_DIR = path.join(__dirname, 'data', 'watermark');
-const MAP_TILE_DIR = path.join(__dirname, 'data', 'map-tiles');
+const MAP_TILE_DIR = path.join(__dirname, 'data', 'map-tiles-v2');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif',

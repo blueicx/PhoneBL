@@ -17,9 +17,9 @@
   --transition-normal: 300ms ease;
 
   --bg-primary: #0d1117;
-  --bg-secondary: rgba(26, 26, 46, .58);
-  --bg-tertiary: rgba(26, 26, 46, .30);
-  --border: rgba(255, 255, 255, .24);
+  --bg-secondary: rgba(4, 7, 18, .48);
+  --bg-tertiary: rgba(4, 7, 18, .22);
+  --border: rgba(255, 255, 255, .18);
   --text-primary: rgba(255, 255, 255, .96);
   --text-secondary: rgba(255, 255, 255, .75);
   --accent: var(--color-accent);
@@ -413,8 +413,7 @@ body {
 
 /* Map: blue holographic Earth */
 .leaflet-tile-pane {
-  filter: grayscale(1) sepia(1) hue-rotate(172deg) saturate(2.4) brightness(0.82) contrast(1.08);
-  opacity: 0.34;
+  opacity: 0.58;
 }
 
 #map-canvas {
@@ -1387,7 +1386,7 @@ body::before {
   z-index: -1;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, .16) 0%, transparent 42%),
-    linear-gradient(315deg, rgba(26, 26, 46, .22) 0%, transparent 52%),
+    linear-gradient(315deg, rgba(2, 5, 14, .42) 0%, transparent 58%),
     linear-gradient(135deg, var(--color-bg) 0%, var(--color-ink) 100%);
 }
 
@@ -1406,8 +1405,8 @@ body::before {
 .compression-card,
 .stat-card,
 .tl-header {
-  background: linear-gradient(120deg, rgba(255, 255, 255, .08) 0%, rgba(26, 26, 46, .58) 100%);
-  border: 1px solid rgba(255, 255, 255, .18);
+  background: linear-gradient(120deg, rgba(255, 255, 255, .04) 0%, rgba(3, 6, 15, .46) 100%);
+  border: 1px solid rgba(255, 255, 255, .14);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(22px) saturate(1.35);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
@@ -1440,7 +1439,7 @@ body::before {
 .batch-bar button,
 .task-header-actions button {
   border: 1px solid rgba(255, 255, 255, .15);
-  background: rgba(26, 26, 46, .26);
+  background: rgba(3, 6, 15, .22);
   color: var(--text-primary);
   border-radius: var(--radius-btn);
   transition: background var(--transition-fast), border-color var(--transition-fast),
@@ -1457,8 +1456,8 @@ body::before {
 .quick-tag:hover,
 .batch-bar button:hover,
 .task-header-actions button:hover {
-  background: rgba(26, 26, 46, .42);
-  border-color: rgba(255, 255, 255, .28);
+  background: rgba(2, 5, 13, .34);
+  border-color: rgba(255, 255, 255, .24);
   color: var(--text-primary);
 }
 
@@ -1468,8 +1467,8 @@ body::before {
 }
 
 .nav-item.active {
-  background: rgba(26, 26, 46, .48);
-  border-color: rgba(255, 255, 255, .28);
+  background: rgba(2, 5, 13, .40);
+  border-color: rgba(255, 255, 255, .24);
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -1491,7 +1490,7 @@ body::before {
 .compression-row select,
 #gps-lat-input,
 #gps-lon-input {
-  background: rgba(26, 26, 46, .28);
+  background: rgba(2, 5, 13, .24);
   border: 1px solid rgba(255, 255, 255, .17);
   border-radius: var(--radius-btn);
   color: var(--text-primary);
@@ -1511,7 +1510,7 @@ body::before {
 #gps-lat-input:focus,
 #gps-lon-input:focus {
   border-color: rgba(255, 255, 255, .52);
-  background: rgba(26, 26, 46, .36);
+  background: rgba(0, 3, 10, .30);
   outline: none;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, .10);
 }
@@ -1556,7 +1555,7 @@ textarea::placeholder {
 }
 
 .photo-card {
-  background: rgba(255, 255, 255, .10);
+  background: rgba(2, 6, 16, .20);
 }
 
 .photo-card img {
@@ -1620,7 +1619,7 @@ textarea::placeholder {
 .rename-modal-content,
 .edit-modal-content,
 .scan-modal-content {
-  background: linear-gradient(120deg, rgba(255, 255, 255, .07) 0%, rgba(26, 26, 46, .62) 100%);
+  background: linear-gradient(120deg, rgba(255, 255, 255, .04) 0%, rgba(2, 5, 13, .52) 100%);
   backdrop-filter: blur(28px) saturate(1.35);
   -webkit-backdrop-filter: blur(28px) saturate(1.35);
 }
@@ -1701,21 +1700,23 @@ textarea::placeholder {
 
 /* Keep the map as a translucent blue “Earth” layer inside the glass palette. */
 .leaflet-tile-pane {
-  filter: grayscale(.72) sepia(.42) hue-rotate(172deg) saturate(1.75) brightness(.94) contrast(1.04);
-  opacity: .48;
+  filter: none;
+  isolation: isolate;
+  opacity: .68;
 }
 
 #map-canvas,
 .leaflet-container#map-canvas {
+  isolation: isolate;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .10) 0%, transparent 38%),
-    radial-gradient(circle at 50% 42%, rgba(88, 145, 205, .94) 0%, rgba(43, 74, 110, .96) 58%, rgba(26, 26, 46, .97) 100%) !important;
+    linear-gradient(180deg, rgba(120, 175, 255, .07) 0%, transparent 36%),
+    radial-gradient(circle at 50% 42%, rgba(22, 49, 88, .92) 0%, rgba(9, 18, 35, .96) 58%, rgba(2, 5, 13, .99) 100%) !important;
 }
 
 .leaflet-control-zoom,
 .leaflet-control-attribution {
-  background: rgba(26, 26, 46, .46) !important;
-  border: 1px solid rgba(255, 255, 255, .18) !important;
+  background: rgba(4, 7, 16, .40) !important;
+  border: 1px solid rgba(255, 255, 255, .14) !important;
   border-radius: var(--radius-btn);
   color: var(--text-primary) !important;
   backdrop-filter: blur(14px);

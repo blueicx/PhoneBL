@@ -442,7 +442,7 @@ async function initMap() {
   if (photoMap) { photoMap.invalidateSize(); return; }
 
   photoMap = L.map('map-canvas').setView([30, 110], 4);
-  L.tileLayer('maptile://tiles/{z}/{y}/{x}', {
+  L.tileLayer('maptile://tiles/{z}/{x}/{y}', {
     attribution: 'Esri, HERE, Garmin',
     maxZoom: 16,
     keepBuffer: 8,
