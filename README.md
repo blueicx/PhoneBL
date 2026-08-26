@@ -14,7 +14,7 @@ PhoneBL 是一款面向旅行照片的本地优先照片管理工具，支持照
 - 照片地图：本地瓦片缓存、透明蓝灰底图、GPS 坐标展示、位置分组和旅行路线可视化。
 - 批量操作：标签、重命名、回收站删除、永久删除确认、水印、压缩。
 - 编辑工具：LR 预设近似还原、非破坏性编辑副本、导出副本。
-- AI 能力：Gemini 自动场景标签；API Key 使用 Electron SafeStorage 加密保存。
+- AI 能力：自动场景标签，支持 Google Gemini 或任意 OpenAI 兼容接口（可自定义模型、接口地址、提示词）；API Key 使用 Electron SafeStorage 加密保存在本机。
 - 其他功能：相似照片检测、连拍识别、统计面板、幻灯片放映。
 
 ### 快速开始
@@ -30,6 +30,15 @@ npm start
 - Node.js 22 或更高版本
 - npm 10 或更高版本
 
+### AI 场景识别配置
+
+打开「设置 → AI 场景识别」，选择服务商后填写模型、接口地址和 API Key：
+
+- Google Gemini：默认接口 `https://generativelanguage.googleapis.com/v1beta`，模型如 `gemini-1.5-flash`。
+- OpenAI 兼容接口：适用于 OpenAI 官方、DeepSeek、通义千问兼容模式、硅基流动、OpenRouter、one-api 等任何提供 `/chat/completions` 的网关，只需改接口地址和模型名。
+
+识别提示词可自定义，留空则使用默认提示词（输出不超过 8 个中文标签）。「测试连接」会用一张 1×1 图片发起最小请求验证配置是否可用。API Key 只加密保存在本机，不会写入仓库，界面也不会回显明文。
+
 ### 快捷键
 
 | 按键 | 功能 |
@@ -44,7 +53,7 @@ npm start
 
 ### 隐私说明
 
-照片本身始终保存在本地。只有当你主动配置 Gemini API Key 并使用 AI 标签时，相关照片信息才会发送到 Google Gemini API。地图底图会缓存到本机；反向地理编码仅在查看位置信息时请求 Nominatim，并遵守其频率限制。
+照片本身始终保存在本地。只有当你主动配置 AI 接口的 API Key 并运行 AI 标签时，压缩后的图片才会发送给你设置的服务商接口（默认为 Google Gemini）。地图底图会缓存到本机；反向地理编码仅在查看位置信息时请求 Nominatim，并遵守其频率限制。
 
 生成副本默认保留 EXIF / IPTC / XMP 元数据。导出和处理流程可选择“保留全部”“移除 GPS”或“仅保留最小安全元数据”。
 
@@ -64,8 +73,11 @@ main.js            Electron 主进程：扫描、数据库、sharp 图像处理�
 preload.js         渲染进程安全桥接 API
 src/               数据库迁移、任务队列、元数据和日志模块
 renderer/          界面、地图和交互逻辑
+scripts/           测试与界面冒烟检查脚本
 data/              本地运行时数据，不入库
 ```
+
+本地检查：`npm run lint` 语法检查，`npm test` 单元与迁移测试，`npm run smoke` 会启动真实界面，验证图库分页加载与 AI 设置面板。
 
 ### 许可证
 
@@ -94,7 +106,7 @@ PhoneBL is a local-first photo manager for travel photography. It provides libra
 - Photo map: cached tiles, a transparent blue-grey basemap, GPS visualization, location groups, and travel routes.
 - Batch operations: tags, renaming, recycle-bin deletion, permanent-delete confirmation, watermarks, and compression.
 - Editing: approximate Lightroom preset support, non-destructive edit copies, and export.
-- AI features: automatic scene tagging with Gemini.
+- AI features: automatic scene tagging with Google Gemini or any OpenAI-compatible endpoint (custom model, base URL, and prompt); the API key is encrypted on disk with Electron SafeStorage.
 - Extras: similar-photo detection, burst detection, statistics, and slideshow playback.
 
 ### Quick Start
@@ -110,6 +122,15 @@ Requirements:
 - Node.js 22 or later
 - npm 10 or later
 
+### AI Provider Setup
+
+Open “Settings → AI scene recognition”, pick a provider, then fill in the model, base URL and API key:
+
+- Google Gemini: default base URL `https://generativelanguage.googleapis.com/v1beta`, model such as `gemini-1.5-flash`.
+- OpenAI-compatible: works with OpenAI, DeepSeek, Qwen compatible mode, SiliconFlow, OpenRouter, one-api and any other gateway exposing `/chat/completions`; change the base URL and model name.
+
+The recognition prompt is editable and falls back to a default that asks for up to 8 short Chinese tags. “Test connection” sends one 1x1 image to verify the configuration. Keys stay encrypted on this machine and are never shown in plain text or committed.
+
 ### Keyboard Shortcuts
 
 | Key | Action |
@@ -124,7 +145,7 @@ After the first launch, select a folder containing JPG, PNG, WebP, NEF, or other
 
 ### Privacy
 
-Photos remain stored locally. If you configure a Gemini API key and explicitly run AI tagging, relevant photo information is sent to the Google Gemini API. Map tiles are cached locally; reverse geocoding uses Nominatim only when location details are requested and respects its rate limits.
+Photos remain stored locally. Only when you configure an AI API key and explicitly run AI tagging is a downscaled image sent to the provider endpoint you configured (Google Gemini by default). Map tiles are cached locally; reverse geocoding uses Nominatim only when location details are requested and respects its rate limits.
 
 Generated copies keep EXIF / IPTC / XMP metadata by default. Processing can choose “keep all”, “remove GPS”, or “minimal safe metadata”.
 
@@ -144,8 +165,11 @@ main.js            Electron main process: scanning, database, sharp processing, 
 preload.js         Secure renderer bridge
 src/               Database migration, jobs, metadata, and logging modules
 renderer/          UI, map, and interaction logic
+scripts/           Test and UI smoke-check harnesses
 data/              Local runtime data, not committed
 ```
+
+Local checks: `npm run lint` for syntax, `npm test` for unit and migration tests, and `npm run smoke` to boot the real UI and verify gallery paging plus the AI settings panel.
 
 ### License
 

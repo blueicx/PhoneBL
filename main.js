@@ -7,6 +7,14 @@ const { JobManager } = require('./src/job-manager');
 const { applyMetadataPolicy } = require('./src/metadata');
 const { orientationTransform } = require('./src/image-utils');
 const { createLogger } = require('./src/logger');
+const {
+  AI_PROVIDERS,
+  DEFAULT_AI_PROMPT,
+  PROVIDER_GEMINI,
+  providerById,
+  requestVision,
+  parseTags
+} = require('./src/ai-vision');
 const exifr = require('exifr');
 const sharp = require('sharp');
 const crypto = require('crypto');
@@ -1229,8 +1237,8 @@ function jobHandlers() {
       return { done, failed, total: payload.ids.length };
     },
     'ai-tags': async ({ payload, shouldContinue, reportProgress }) => {
-      const keyRow = getStoredGeminiKey();
-      if (!keyRow) throw new Error('请先配置 Gemini API Key');
+      const aiConfig = getAiConfig();
+      if (!aiConfig.hasKey) throw new Error(`请先在设置中配置 ${aiConfig.label} API Key`);
       let success = 0, failed = 0;
       for (const [index, id] of payload.ids.entries()) {
         await shouldContinue();
@@ -1239,12 +1247,15 @@ function jobHandlers() {
           if (!photoPath) throw new Error('照片不存在');
           const imageBuffer = await fsp.readFile(photoPath);
           const resized = await sharp(imageBuffer, { failOn: 'none' }).resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-          const text = await callGemini(keyRow, resized.toString('base64'), 'image/jpeg');
+          const text = await requestVision(aiConfig, resized.toString('base64'), 'image/jpeg');
           const existing = db.exec('SELECT tags FROM photos WHERE id = ?', [id]).at(0)?.values?.[0]?.[0] || '';
-          const tags = [...new Set([...existing.split(',').map(v => v.trim()).filter(Boolean), ...text.split(/[,，、]/).map(v => v.trim()).filter(Boolean)])].join(',');
+          const tags = [...new Set([...existing.split(',').map(v => v.trim()).filter(Boolean), ...parseTags(text)])].join(',');
           db.run('UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?', [tags, id]);
           success++;
-        } catch { failed++; }
+        } catch (err) {
+          failed++;
+          logger.warn(`ai-tags 失败 id=${id}: ${err.message}`);
+        }
         reportProgress(index + 1, payload.ids.length, `${success} 成功 / ${failed} 失败`);
       }
       saveDb();
@@ -1323,8 +1334,10 @@ app.whenReady().then(async () => {
   await ensureDirs();
   await initDb();
   registerProtocolHandlers();
-  jobManager = new JobManager(db, mainWindow, jobHandlers());
   createWindow();
+  // JobManager keeps a reference to the window to push progress events, so it
+  // has to be created after the BrowserWindow exists.
+  jobManager = new JobManager(db, mainWindow, jobHandlers());
   jobManager.loadQueuedJobs();
 }).catch(error => {
   logger.error('Application startup failed', { stack: error.stack });
@@ -1494,60 +1507,122 @@ ipcMain.handle('get-stats', () => {
 ipcMain.handle('open-file', (event, filePath) => shell.openPath(filePath));
 ipcMain.handle('show-in-folder', (event, filePath) => shell.showItemInFolder(filePath));
 
-ipcMain.handle('save-gemini-key', (event, key) => {
-  if (!key) {
-    db.run("DELETE FROM settings WHERE key IN ('gemini_key', 'gemini_key_encrypted')");
-    return true;
+// --- AI scene recognition settings (provider agnostic) ---
+const AI_SETTING_KEYS = {
+  provider: 'ai_provider',
+  model: 'ai_model',
+  baseUrl: 'ai_base_url',
+  prompt: 'ai_prompt'
+};
+// The renderer never reads back a stored key; it echoes this token to mean "keep".
+const KEEP_STORED_SECRET = '********';
+
+function getSettingValue(key) {
+  const result = db.exec('SELECT value FROM settings WHERE key = ?', [key]);
+  return result.at(0)?.values?.[0]?.[0] ?? null;
+}
+
+function setSettingValue(key, value) {
+  if (value === null || value === undefined || value === '') {
+    db.run('DELETE FROM settings WHERE key = ?', [key]);
+    return;
   }
+  db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, String(value)]);
+}
+
+function readSecretKey(settingKey) {
+  const encrypted = getSettingValue(`${settingKey}_encrypted`);
+  if (encrypted && safeStorage.isEncryptionAvailable()) {
+    try { return safeStorage.decryptString(Buffer.from(encrypted, 'base64')); } catch {}
+  }
+  return getSettingValue(settingKey) || null;
+}
+
+function storeSecretKey(settingKey, secret) {
+  db.run(`DELETE FROM settings WHERE key IN ('${settingKey}', '${settingKey}_encrypted')`);
+  if (!secret) return;
   if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(String(key)).toString('base64');
-    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_key_encrypted', ?)", [encrypted]);
-    db.run("DELETE FROM settings WHERE key = 'gemini_key'");
+    db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [
+      `${settingKey}_encrypted`, safeStorage.encryptString(String(secret)).toString('base64')
+    ]);
   } else {
-    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_key', ?)", [key]);
+    db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [settingKey, String(secret)]);
   }
+}
+
+function getAiConfig() {
+  const provider = providerById(getSettingValue(AI_SETTING_KEYS.provider) || PROVIDER_GEMINI);
+  let apiKey = readSecretKey('ai_key');
+  if (!apiKey && provider.id === PROVIDER_GEMINI) apiKey = readSecretKey('gemini_key');
+  return {
+    provider: provider.id,
+    label: provider.label,
+    model: getSettingValue(AI_SETTING_KEYS.model) || provider.defaultModel,
+    baseUrl: getSettingValue(AI_SETTING_KEYS.baseUrl) || provider.baseUrl,
+    prompt: getSettingValue(AI_SETTING_KEYS.prompt) || DEFAULT_AI_PROMPT,
+    apiKey: apiKey || '',
+    hasKey: Boolean(apiKey)
+  };
+}
+
+ipcMain.handle('save-gemini-key', (event, key) => {
+  storeSecretKey('gemini_key', key);
   saveDb();
   return true;
 });
 
-ipcMain.handle('get-gemini-key', () => {
-  return getStoredGeminiKey();
+ipcMain.handle('get-gemini-key', () => readSecretKey('gemini_key'));
+
+ipcMain.handle('get-ai-providers', () => AI_PROVIDERS);
+
+ipcMain.handle('get-ai-config', () => getAiConfig());
+
+ipcMain.handle('save-ai-config', (event, config = {}) => {
+  const provider = providerById(config.provider);
+  setSettingValue(AI_SETTING_KEYS.provider, provider.id);
+  setSettingValue(AI_SETTING_KEYS.model, String(config.model || '').trim() || provider.defaultModel);
+  setSettingValue(AI_SETTING_KEYS.baseUrl, String(config.baseUrl || '').trim() || provider.baseUrl);
+  setSettingValue(AI_SETTING_KEYS.prompt, String(config.prompt || '').trim() || DEFAULT_AI_PROMPT);
+
+  const secret = String(config.apiKey || '').trim();
+  const current = getAiConfig();
+  if (secret === KEEP_STORED_SECRET) {
+    // Keep the stored key, but move a legacy Gemini key into the new slot.
+    if (current.apiKey) storeSecretKey('ai_key', current.apiKey);
+  } else if (secret) {
+    storeSecretKey('ai_key', secret);
+  } else {
+    storeSecretKey('ai_key', '');
+  }
+  db.run("DELETE FROM settings WHERE key IN ('gemini_key', 'gemini_key_encrypted')");
+  saveDb();
+  const saved = getAiConfig();
+  return { ok: true, config: { ...saved, apiKey: saved.hasKey ? KEEP_STORED_SECRET : '' } };
 });
 
-function getStoredGeminiKey() {
-  const encrypted = db.exec("SELECT value FROM settings WHERE key = 'gemini_key_encrypted'");
-  if (encrypted.at(0)?.values?.[0]?.[0] && safeStorage.isEncryptionAvailable()) {
-    try { return safeStorage.decryptString(Buffer.from(encrypted[0].values[0][0], 'base64')); } catch {}
-  }
-  return db.exec("SELECT value FROM settings WHERE key = 'gemini_key'").at(0)?.values?.[0]?.[0] || null;
+// Small blank image used by the "test connection" button; keeps the probe cheap.
+async function probeAiConfig() {
+  const config = getAiConfig();
+  if (!config.hasKey) throw new Error('请先填写 API Key');
+  const pixelPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+    'base64'
+  ).toString('base64');
+  const text = await requestVision(config, pixelPng, 'image/png');
+  return { ok: true, sample: String(text).slice(0, 120) };
 }
 
-async function callGemini(apiKey, base64Image, mimeType) {
-  const body = JSON.stringify({
-    contents: [{
-      parts: [
-        { text: "Analyze this photo and return ONLY a comma-separated list of short descriptive tags in Chinese. Include scene type, weather, time of day, notable objects, and mood. Maximum 8 tags. No explanations, just the tags." },
-        { inline_data: { mime_type: mimeType, data: base64Image } }
-      ]
-    }],
-    generationConfig: { maxOutputTokens: 100, temperature: 0.3 }
-  });
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body
-  });
-  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${await res.text()}`);
-  const json = await res.json();
-  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from Gemini');
-  return text.trim();
-}
+ipcMain.handle('test-ai-config', async () => {
+  try {
+    return await probeAiConfig();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 ipcMain.handle('ai-tag-single', async (event, id) => {
-  const apiKey = getStoredGeminiKey();
-  if (!apiKey) return { ok: false, error: '请先在设置中配置 Gemini API Key' };
+  const aiConfig = getAiConfig();
+  if (!aiConfig.hasKey) return { ok: false, error: `请先在设置中配置 ${aiConfig.label} API Key` };
 
   const photoResult = db.exec("SELECT path, ext FROM photos WHERE id = ?", [id]);
   if (!photoResult.length || !photoResult[0].values.length) return { ok: false, error: 'Photo not found' };
@@ -1562,29 +1637,31 @@ ipcMain.handle('ai-tag-single', async (event, id) => {
       .toBuffer();
     const base64 = resized.toString('base64');
 
-    const tagsText = await callGemini(apiKey, base64, 'image/jpeg');
+    const tagsText = await requestVision(aiConfig, base64, 'image/jpeg');
 
     // Merge with existing tags
     const existing = db.exec("SELECT tags FROM photos WHERE id = ?", [id]);
     const currentTags = (existing[0]?.values[0]?.[0] || '').split(',').map(s => s.trim()).filter(Boolean);
-    const newTags = tagsText.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+    const newTags = parseTags(tagsText);
     const merged = [...new Set([...currentTags, ...newTags])].join(',');
 
-    db.run("UPDATE photos SET tags = ? WHERE id = ?", [merged, id]);
+    db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?", [merged, id]);
     saveDb();
     return { ok: true, tags: merged };
   } catch (err) {
+    logger.warn(`AI 识别失败 id=${id}: ${err.message}`);
     return { ok: false, error: err.message };
   }
 });
 
 ipcMain.handle('ai-tag-batch', async (event, ids) => {
-  const apiKey = getStoredGeminiKey();
-  if (!apiKey) return { ok: false, error: '请先在设置中配置 Gemini API Key' };
+  const aiConfig = getAiConfig();
+  if (!aiConfig.hasKey) return { ok: false, error: `请先在设置中配置 ${aiConfig.label} API Key` };
 
   let success = 0;
   let failed = 0;
   let processed = 0;
+  let lastError = '';
 
   for (const id of ids) {
     try {
@@ -1599,22 +1676,23 @@ ipcMain.handle('ai-tag-batch', async (event, ids) => {
         .toBuffer();
       const base64 = resized.toString('base64');
 
-      const tagsText = await callGemini(apiKey, base64, 'image/jpeg');
+      const tagsText = await requestVision(aiConfig, base64, 'image/jpeg');
 
       const existing = db.exec("SELECT tags FROM photos WHERE id = ?", [id]);
       const currentTags = (existing[0]?.values[0]?.[0] || '').split(',').map(s => s.trim()).filter(Boolean);
-      const newTags = tagsText.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+      const newTags = parseTags(tagsText);
       const merged = [...new Set([...currentTags, ...newTags])].join(',');
-      db.run("UPDATE photos SET tags = ? WHERE id = ?", [merged, id]);
+      db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?", [merged, id]);
       success++;
-    } catch {
+    } catch (err) {
+      lastError = err.message;
       failed++;
     }
     processed++;
-    event.sender.send('ai-tag-progress', { processed, total: ids.length, success, failed });
+    event.sender.send('ai-tag-progress', { processed, total: ids.length, success, failed, lastError });
   }
   saveDb();
-  return { ok: true, success, failed };
+  return { ok: true, success, failed, lastError };
 });
 
 ipcMain.handle('fix-missing-thumbs', async (event) => {
@@ -2072,16 +2150,21 @@ ipcMain.handle('find-bursts', () => {
 });
 
 ipcMain.handle('save-app-setting', (event, key, value) => {
+  if (HIDDEN_SETTING_KEYS.has(String(key))) return false;
   db.run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, String(value)]);
   saveDb();
   return true;
 });
 
+const HIDDEN_SETTING_KEYS = new Set([
+  'gemini_key', 'gemini_key_encrypted', 'ai_key', 'ai_key_encrypted'
+]);
+
 ipcMain.handle('get-app-settings', () => {
   const r = db.exec("SELECT key, value FROM settings");
   if (!r.length) return {};
   const obj = {};
-  r[0].values.forEach(v => { if (v[0] !== 'gemini_key') obj[v[0]] = v[1]; });
+  r[0].values.forEach(v => { if (!HIDDEN_SETTING_KEYS.has(v[0])) obj[v[0]] = v[1]; });
   return obj;
 });
 

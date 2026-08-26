@@ -33,6 +33,9 @@ let galleryOffset = 0;
 const galleryPageSize = 160;
 let galleryLoading = false;
 let galleryDone = false;
+// Generation counter: lets a fresh load supersede an in-flight page request
+// instead of being swallowed by the loading lock.
+let gallerySeq = 0;
 
 // --- View Switching ---
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -58,9 +61,11 @@ document.getElementById('btn-close').addEventListener('click', () => api.closeWi
 
 // --- Photo Grid ---
 async function loadPhotos(options = {}) {
+  const seq = ++gallerySeq;
   const grid = document.getElementById('photo-grid');
   const empty = document.getElementById('empty-state');
   grid.innerHTML = '';
+  empty.classList.add('hidden');
   for (let i = 0; i < 12; i++) {
     const sk = document.createElement('div');
     sk.className = 'skeleton-card';
@@ -73,11 +78,11 @@ async function loadPhotos(options = {}) {
 
   const dateFrom = document.getElementById('date-from')?.value || '';
   const dateTo = document.getElementById('date-to')?.value || '';
-  galleryOffset = 0; galleryDone = false; detailNavList = [];
-  await appendPhotos({ sortBy, filter, searchQ, dateFrom, dateTo });
+  galleryOffset = 0; galleryDone = false; galleryLoading = false; detailNavList = [];
+  await appendPhotos({ sortBy, filter, searchQ, dateFrom, dateTo }, seq);
 }
 
-async function appendPhotos(query = {}) {
+async function appendPhotos(query = {}, seq = gallerySeq) {
   if (galleryLoading || galleryDone) return;
   const grid = document.getElementById('photo-grid');
   const empty = document.getElementById('empty-state');
@@ -94,6 +99,9 @@ async function appendPhotos(query = {}) {
       dateFrom: query.dateFrom || '',
       dateTo: query.dateTo || ''
     });
+    // A newer loadPhotos() already rebuilt the grid; drop these stale cards so
+    // they cannot pile up underneath the new placeholders.
+    if (seq !== gallerySeq) return;
     if (!photos.length && galleryOffset === 0) {
       grid.innerHTML = '';
       empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">📷</div><p>还没有照片，点击上方按钮扫描文件夹</p>';
@@ -102,6 +110,9 @@ async function appendPhotos(query = {}) {
       return;
     }
     empty.classList.add('hidden');
+    // Real cards replace the placeholders; leaving them behind made the first
+    // page look permanently stuck on "loading".
+    grid.querySelectorAll('.skeleton-card').forEach(el => el.remove());
     detailNavList.push(...photos);
     const frag = document.createDocumentFragment();
     for (const photo of photos) frag.appendChild(createPhotoCard(photo));
@@ -112,8 +123,18 @@ async function appendPhotos(query = {}) {
     });
     galleryOffset += photos.length;
     if (photos.length < galleryPageSize) galleryDone = true;
+  } catch (err) {
+    if (seq !== gallerySeq) return;
+    // Never leave placeholders behind when a page fails to load.
+    grid.querySelectorAll('.skeleton-card').forEach(el => el.remove());
+    galleryDone = true;
+    if (galleryOffset === 0) {
+      empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">⚠️</div><p>照片读取失败，请重试</p>';
+      empty.classList.remove('hidden');
+    }
+    showToast('读取照片失败：' + err.message, 'error', 6000);
   } finally {
-    galleryLoading = false;
+    if (seq === gallerySeq) galleryLoading = false;
   }
 }
 
@@ -937,9 +958,112 @@ document.getElementById('btn-remove-watermark').addEventListener('click', async 
   showToast('水印已移除', 'success');
 });
 
-document.getElementById('btn-save-gemini').addEventListener('click', async () => {
-  const key = document.getElementById('gemini-key-input').value.trim();
-  if (key) await api.saveGeminiKey(key);
+// --- AI scene recognition settings ---
+let aiProviderList = [];
+let aiKeyStored = false;
+
+function aiEl(id) {
+  return document.getElementById(id);
+}
+
+function currentAiProvider() {
+  const id = aiEl('ai-provider-select').value;
+  return aiProviderList.find(item => item.id === id) || aiProviderList[0] || null;
+}
+
+function updateAiHint() {
+  const hint = aiEl('ai-hint');
+  const provider = currentAiProvider();
+  if (!hint || !provider) return;
+  const parts = [`${provider.label} · ${aiKeyStored ? '已保存密钥' : '尚未配置密钥'}`];
+  if (provider.hint) parts.push(provider.hint);
+  hint.textContent = parts.join(' — ');
+}
+
+function applyAiProviderDefaults() {
+  const provider = currentAiProvider();
+  if (!provider) return;
+  aiEl('ai-model-input').value = provider.defaultModel || '';
+  aiEl('ai-base-url-input').value = provider.baseUrl || '';
+  aiEl('ai-key-input').placeholder = aiKeyStored ? '已保存，留空则保持不变' : '请输入 API Key';
+  updateAiHint();
+}
+
+function collectAiConfig() {
+  return {
+    provider: aiEl('ai-provider-select').value,
+    model: aiEl('ai-model-input').value.trim(),
+    baseUrl: aiEl('ai-base-url-input').value.trim(),
+    prompt: aiEl('ai-prompt-input').value.trim(),
+    apiKey: aiEl('ai-key-input').value.trim()
+  };
+}
+
+async function loadAiSettings(force = false) {
+  if (!aiEl('ai-provider-select')) return;
+  if (force || !aiProviderList.length) {
+    aiProviderList = await api.getAiProviders();
+    aiEl('ai-provider-select').innerHTML = aiProviderList
+      .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`)
+      .join('');
+  }
+  const config = await api.getAiConfig();
+  aiKeyStored = Boolean(config.hasKey);
+  aiEl('ai-provider-select').value = config.provider || 'gemini';
+  aiEl('ai-model-input').value = config.model || '';
+  aiEl('ai-base-url-input').value = config.baseUrl || '';
+  aiEl('ai-prompt-input').value = config.prompt || '';
+  aiEl('ai-key-input').value = '';
+  aiEl('ai-key-input').placeholder = aiKeyStored ? '已保存，留空则保持不变' : '请输入 API Key';
+  updateAiHint();
+}
+
+aiEl('ai-provider-select')?.addEventListener('change', applyAiProviderDefaults);
+
+aiEl('btn-save-ai')?.addEventListener('click', async () => {
+  const config = collectAiConfig();
+  if (!config.apiKey && !aiKeyStored) {
+    showToast('请先填写 API Key', 'error');
+    return;
+  }
+  if (!config.apiKey && aiKeyStored) config.apiKey = '********';
+  const result = await api.saveAiConfig(config);
+  if (result?.ok) {
+    aiKeyStored = true;
+    aiEl('ai-key-input').value = '';
+    showToast('AI 设置已保存', 'success');
+    updateAiHint();
+  }
+});
+
+aiEl('btn-test-ai')?.addEventListener('click', async () => {
+  const button = aiEl('btn-test-ai');
+  button.disabled = true;
+  button.textContent = '测试中…';
+  try {
+    const result = await api.testAiConfig();
+    if (result?.ok) showToast('连接成功，返回：' + result.sample, 'success', 6000);
+    else showToast('连接失败：' + (result?.error || '未知错误'), 'error', 8000);
+  } catch (err) {
+    showToast('连接失败：' + err.message, 'error', 8000);
+  } finally {
+    button.disabled = false;
+    button.textContent = '测试连接';
+  }
+});
+
+aiEl('btn-clear-ai-key')?.addEventListener('click', async () => {
+  if (!aiKeyStored) { showToast('当前没有已保存的密钥', 'info'); return; }
+  if (!confirm('确定清除已保存的 API Key？清除后需要重新填写才能识别。')) return;
+  const config = collectAiConfig();
+  config.apiKey = '';
+  const result = await api.saveAiConfig(config);
+  if (result?.ok) {
+    aiKeyStored = false;
+    aiEl('ai-key-input').value = '';
+    showToast('密钥已清除', 'success');
+    updateAiHint();
+  }
 });
 
 // --- Stats ---
@@ -1682,11 +1806,10 @@ document.getElementById('btn-bursts').addEventListener('click', async () => {
   showToast(msg);
 });
 
-// --- Load Gemini Key on Settings ---
-document.querySelector('[data-view=\"settings\"]').addEventListener('click', async () => {
+// --- Load AI + watermark settings when the Settings view opens ---
+document.querySelector('[data-view="settings"]').addEventListener('click', async () => {
   setTimeout(async () => {
-    const key = await api.getGeminiKey();
-    if (key) document.getElementById('gemini-key-input').value = key;
+    await loadAiSettings();
     await refreshWatermark();
   }, 100);
 });
@@ -1797,6 +1920,7 @@ async function restoreSettings() {
     }
   } catch {}
   await loadPhotos({ sortBy: s.sortOrder });
+  await loadAiSettings().catch(err => console.warn('AI 设置读取失败', err));
 }
 
 function saveSettings() {

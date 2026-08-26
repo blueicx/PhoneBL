@@ -10,8 +10,9 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "lint": "node --check main.js && node --check preload.js && node --check src/database.js && node --check src/job-manager.js && node --check src/logger.js && node --check src/metadata.js && node --check src/image-utils.js && node --check renderer/app.js",
+    "lint": "node --check main.js && node --check preload.js && node --check src/database.js && node --check src/job-manager.js && node --check src/logger.js && node --check src/metadata.js && node --check src/image-utils.js && node --check src/ai-vision.js && node --check renderer/app.js && node --check scripts/smoke-ui.js",
     "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1",
+    "smoke": "node scripts/smoke-ui.js",
     "package": "electron-builder --win --publish never",
     "verify": "npm run lint && npm test"
   },

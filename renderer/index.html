@@ -127,13 +127,36 @@
       <!-- Settings View -->
       <section id="view-settings" class="view">
         <h2>设置</h2>
-        <div class="settings-group">
-          <label>Gemini API Key（用于 AI 场景识别）</label>
-          <div class="key-row">
-            <input type="password" id="gemini-key-input" placeholder="AIza..." />
-            <button id="btn-save-gemini" class="btn-primary">保存</button>
+        <div class="settings-group ai-settings-card">
+          <label>AI 场景识别</label>
+          <div class="ai-grid">
+            <div class="ai-field">
+              <span>服务商</span>
+              <select id="ai-provider-select"></select>
+            </div>
+            <div class="ai-field">
+              <span>模型</span>
+              <input type="text" id="ai-model-input" placeholder="gemini-1.5-flash" />
+            </div>
+            <div class="ai-field ai-field-wide">
+              <span>接口地址</span>
+              <input type="text" id="ai-base-url-input" placeholder="https://api.example.com/v1" />
+            </div>
+            <div class="ai-field ai-field-wide">
+              <span>API Key</span>
+              <input type="password" id="ai-key-input" placeholder="留空则保持不变" autocomplete="off" />
+            </div>
+            <div class="ai-field ai-field-wide">
+              <span>识别提示词</span>
+              <textarea id="ai-prompt-input" rows="3" placeholder="留空使用默认提示词"></textarea>
+            </div>
           </div>
-          <p class="hint">免费额度每天1500次请求。前往 aistudio.google.com 获取。</p>
+          <div class="key-row ai-actions">
+            <button id="btn-save-ai" class="btn-primary">保存</button>
+            <button id="btn-test-ai" class="btn-secondary">测试连接</button>
+            <button id="btn-clear-ai-key" class="btn-secondary">清除密钥</button>
+          </div>
+          <p class="hint" id="ai-hint">Key 通过系统加密存储在本机，不会写入 Git 仓库。</p>
         </div>
         <div class="settings-group">
           <label>水印</label>
