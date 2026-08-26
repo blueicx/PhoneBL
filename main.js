@@ -1,15 +1,17 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
-const initSqlJs = require('sql.js');
+const { openPhotoDatabase } = require('./src/database');
+const { JobManager } = require('./src/job-manager');
+const { applyMetadataPolicy } = require('./src/metadata');
 const exifr = require('exifr');
 const sharp = require('sharp');
 const crypto = require('crypto');
 
 let db = null;
-let SQL = null;
 let mainWindow = null;
+let jobManager = null;
 
 const DB_PATH = path.join(__dirname, 'data', 'photos.db');
 const THUMB_DIR = path.join(__dirname, 'data', 'thumbs');
@@ -17,6 +19,7 @@ const PREVIEW_DIR = path.join(__dirname, 'data', 'previews');
 const EDIT_DIR = path.join(__dirname, 'data', 'edited');
 const DISPLAY_DIR = path.join(__dirname, 'data', 'displays');
 const WATERMARK_ASSET_DIR = path.join(__dirname, 'data', 'watermark');
+const MAP_TILE_DIR = path.join(__dirname, 'data', 'map-tiles');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif',
@@ -27,83 +30,62 @@ const RAW_EXTENSIONS = new Set(['.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.webm']);
 const ALL_MEDIA = new Set([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS]);
 
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'maptile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+]);
+
 async function ensureDirs() {
   await fsp.mkdir(path.dirname(DB_PATH), { recursive: true });
   await fsp.mkdir(THUMB_DIR, { recursive: true });
     await fsp.mkdir(PREVIEW_DIR, { recursive: true });
     await fsp.mkdir(EDIT_DIR, { recursive: true });
     await fsp.mkdir(DISPLAY_DIR, { recursive: true });
-    await fsp.mkdir(WATERMARK_ASSET_DIR, { recursive: true });
+  await fsp.mkdir(WATERMARK_ASSET_DIR, { recursive: true });
+  await fsp.mkdir(MAP_TILE_DIR, { recursive: true });
+}
+
+function orientationTransform(pipeline, orientation = 1) {
+  const value = Number(orientation) || 1;
+  switch (value) {
+    case 2: return pipeline.flop();
+    case 3: return pipeline.rotate(180);
+    case 4: return pipeline.rotate(180).flop();
+    case 5: return pipeline.rotate(270).flop();
+    case 6: return pipeline.rotate(90);
+    case 7: return pipeline.rotate(90).flop();
+    case 8: return pipeline.rotate(270);
+    default: return pipeline;
+  }
+}
+
+async function savePhotoVersion(photoId, versionType, versionPath, settings = {}, engine = 'phonebl') {
+  let size = 0;
+  try { size = (await fsp.stat(versionPath)).size; } catch {}
+  db.run(`
+    INSERT OR IGNORE INTO photo_versions
+      (photo_id, version_type, path, settings_json, engine, size, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, 1)
+  `, [Number(photoId), String(versionType), String(versionPath), JSON.stringify(settings), String(engine), size]);
+}
+
+async function activatePhotoVersion(photoId, versionPath) {
+  db.run('UPDATE photo_versions SET is_active = CASE WHEN path = ? THEN 1 ELSE 0 END WHERE photo_id = ?', [
+    String(versionPath), Number(photoId)
+  ]);
+}
+
+async function setPhotoEdit(photoId, versionPath, settings, versionType = 'edit', engine = 'phonebl') {
+  await savePhotoVersion(photoId, versionType, versionPath, settings, engine);
+  await activatePhotoVersion(photoId, versionPath);
 }
 
 async function initDb() {
-  SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    const buf = await fsp.readFile(DB_PATH);
-    db = new SQL.Database(buf);
-  } else {
-    db = new SQL.Database();
-  }
-  db.run(`
-    CREATE TABLE IF NOT EXISTS photos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT UNIQUE NOT NULL,
-      filename TEXT NOT NULL,
-      ext TEXT,
-      size INTEGER DEFAULT 0,
-      width INTEGER DEFAULT 0,
-      height INTEGER DEFAULT 0,
-      date_taken TEXT,
-      camera_make TEXT,
-      camera_model TEXT,
-      iso INTEGER,
-      aperture REAL,
-      shutter TEXT,
-      focal_length REAL,
-      gps_lat REAL,
-      gps_lon REAL,
-      orientation INTEGER DEFAULT 1,
-      tags TEXT DEFAULT '',
-      faces TEXT DEFAULT '',
-      thumb_path TEXT,
-      is_raw INTEGER DEFAULT 0,
-      has_gps INTEGER DEFAULT 0,
-      color_hash TEXT,
-      starred INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-    CREATE TABLE IF NOT EXISTS presets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      source_path TEXT,
-      settings_json TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_photos_date ON photos(date_taken);
-    CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(has_gps);
-    CREATE INDEX IF NOT EXISTS idx_photos_ext ON photos(ext);
-    CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(starred);
-    CREATE INDEX IF NOT EXISTS idx_photos_deleted ON photos(deleted);
-    CREATE INDEX IF NOT EXISTS idx_photos_date_gps ON photos(date_taken, has_gps);
-  `);
-  try { db.run('ALTER TABLE photos ADD COLUMN starred INTEGER DEFAULT 0'); } catch(e) {}
-  try { db.run('ALTER TABLE photos ADD COLUMN deleted INTEGER DEFAULT 0'); } catch(e) {}
-  try { db.run('ALTER TABLE photos ADD COLUMN edit_path TEXT'); } catch(e) {}
-  try { db.run('ALTER TABLE photos ADD COLUMN edit_settings TEXT'); } catch(e) {}
-  try { db.run('ALTER TABLE photos ADD COLUMN edited_at TEXT'); } catch(e) {}
-  saveDb();
+  db = await openPhotoDatabase(DB_PATH);
 }
 
-// Enable WAL mode for faster concurrent reads/writes
-try { db.run("PRAGMA journal_mode=WAL"); db.run("PRAGMA synchronous=NORMAL"); } catch(e) {}
-
 function saveDb() {
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
+  if (!db) return;
+  db.checkpoint();
 }
 
 function scanFolderRecursive(folderPath, includeRaw = true) {
@@ -175,14 +157,8 @@ async function generateThumb(filePath, photoId, isRaw) {
       }
       if (!jpegData) return null;
 
-      // Map EXIF orientation to rotation degrees
-      let rotationDeg = 0;
-      if ([6, 'Rotate 90 CW'].includes(exifOrientation)) rotationDeg = 90;
-      else if ([8, 'Rotate 270 CW'].includes(exifOrientation)) rotationDeg = 270;
-      else if ([3, 'Rotate 180'].includes(exifOrientation)) rotationDeg = 180;
-
       const sharpPipeline = sharp(jpegData);
-      if (rotationDeg > 0) sharpPipeline.rotate(rotationDeg);
+      orientationTransform(sharpPipeline, exifOrientation);
       await sharpPipeline.resize(400, 400, { fit: 'inside' }).webp({ quality: 80 }).toFile(thumbPath);
       return thumbPath;
     } else {
@@ -740,14 +716,9 @@ async function getRawPreviewFile(id) {
     if (!jpegData || jpegData.length < 10000) jpegData = extractEmbeddedJpeg(rawBuf);
     if (!jpegData) return null;
 
-    let rotation = 0;
-    if ([6, 'Rotate 90 CW'].includes(orientation)) rotation = 90;
-    else if ([8, 'Rotate 270 CW'].includes(orientation)) rotation = 270;
-    else if ([3, 'Rotate 180'].includes(orientation)) rotation = 180;
-
     await fsp.mkdir(PREVIEW_DIR, { recursive: true });
     const pipeline = sharp(jpegData, { failOn: 'none' });
-    if (rotation) pipeline.rotate(rotation);
+    orientationTransform(pipeline, orientation);
     await pipeline.jpeg({ quality: 95 }).toFile(cachePath);
     return cachePath;
   } catch {
@@ -762,6 +733,7 @@ const WATERMARK_POSITIONS = new Set([
   'middle-left', 'center', 'middle-right',
   'bottom-left', 'bottom-center', 'bottom-right'
 ]);
+const METADATA_POLICIES = new Set(['keep-all', 'remove-gps', 'minimal-safe']);
 
 function normalizeWatermarkOptions(options = {}) {
   const position = WATERMARK_POSITIONS.has(options.position) ? options.position : 'bottom-right';
@@ -770,7 +742,8 @@ function normalizeWatermarkOptions(options = {}) {
     scale: clamp(Number(options.scale ?? 22), 4, 60) / 100,
     opacity: clamp(Number(options.opacity ?? 90), 10, 100) / 100,
     margin: clamp(Number(options.margin ?? 4), 1, 15) / 100,
-    position
+    position,
+    metadataPolicy: METADATA_POLICIES.has(options.metadataPolicy) ? options.metadataPolicy : 'keep-all'
   };
 }
 
@@ -780,7 +753,8 @@ function normalizeCompressionOptions(options = {}) {
   return {
     engine: COMPRESSION_ENGINE_VERSION,
     quality: Math.round(clamp(Number(options.quality ?? 82), 45, 95)),
-    maxEdge
+    maxEdge,
+    metadataPolicy: METADATA_POLICIES.has(options.metadataPolicy) ? options.metadataPolicy : 'keep-all'
   };
 }
 
@@ -879,13 +853,12 @@ async function applyWatermarkToPhoto(id, watermarkPath, options = {}) {
     await sharp(base.data).composite([{ input: markBuffer, left, top }])
       .jpeg({ quality: 93, mozjpeg: true })
       .toFile(outputPath);
+    await applyMetadataPolicy(outputPath, source, normalized.metadataPolicy);
   }
 
-  db.run("UPDATE photos SET edit_path = ?, edit_settings = ?, edited_at = datetime('now') WHERE id = ?", [
-    outputPath,
-    JSON.stringify({ type: 'watermark', base_edit_path: source === rows[0].values[0][1] ? source : null, watermarkPath, ...normalized }),
-    Number(id)
-  ]);
+  await setPhotoEdit(id, outputPath, {
+    type: 'watermark', base_edit_path: source === rows[0].values[0][1] ? source : null, watermarkPath, ...normalized
+  }, 'watermark', WATERMARK_ENGINE_VERSION);
   await regenerateThumbnailFromImage(id, outputPath);
   return outputPath;
 }
@@ -929,16 +902,16 @@ async function compressPhotoToPhoto(id, options = {}) {
     const info = await pipeline.flatten({ background: '#ffffff' }).removeAlpha()
       .jpeg({ quality: normalized.quality, mozjpeg: true })
       .toFile(outputPath);
+    await applyMetadataPolicy(outputPath, source, normalized.metadataPolicy);
     outputSize = info.size || (await fsp.stat(outputPath)).size;
   } else {
     outputSize = (await fsp.stat(outputPath)).size;
+    await applyMetadataPolicy(outputPath, source, normalized.metadataPolicy);
   }
 
-  db.run("UPDATE photos SET edit_path = ?, edit_settings = ?, edited_at = datetime('now') WHERE id = ?", [
-    outputPath,
-    JSON.stringify({ type: 'compression', base_edit_path: source === rows[0].values[0][1] ? source : null, ...normalized }),
-    Number(id)
-  ]);
+  await setPhotoEdit(id, outputPath, {
+    type: 'compression', base_edit_path: source === rows[0].values[0][1] ? source : null, ...normalized
+  }, 'compression', COMPRESSION_ENGINE_VERSION);
   await regenerateThumbnailFromImage(id, outputPath);
   return { path: outputPath, inputBytes: sourceStat.size, outputBytes: outputSize };
 }
@@ -1123,6 +1096,7 @@ async function renderEditedImage(id, presetId, intensity, mode = 'preview') {
     await outputPipeline.jpeg({ quality: mode === 'preview' ? 87 : 93, mozjpeg: true }).toFile(outputPath);
   }
 
+  if (mode !== 'preview') await applyMetadataPolicy(outputPath, source, 'keep-all');
   return { path: outputPath, name: presetName, normalized };
 }
 
@@ -1163,15 +1137,15 @@ async function indexPhotos(folderPath, event, includeRaw = true) {
 
     const stmt = db.prepare(`
       INSERT INTO photos (path, filename, ext, size, width, height, date_taken,
-        camera_make, camera_model, iso, aperture, shutter, focal_length,
+        camera_make, camera_model, lens_model, iso, aperture, shutter, focal_length,
         gps_lat, gps_lon, orientation, is_raw, has_gps)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run([
       file.path, file.filename, file.ext,
       (() => { try { return fs.statSync(file.path).size; } catch { return 0; } })(),
       width, height, dateTaken,
-      meta.Make || null, meta.Model || null,
+      meta.Make || null, meta.Model || null, meta.LensModel || null,
       meta.ISO || meta.ISOSpeedRatings || null,
       meta.FNumber || null,
       meta.ExposureTime ? `1/${Math.round(1 / meta.ExposureTime)}` : null,
@@ -1219,6 +1193,117 @@ async function indexPhotos(folderPath, event, includeRaw = true) {
   return { total, added, skipped };
 }
 
+function jobHandlers() {
+  return {
+    scan: async ({ payload, window }) => indexPhotos(
+      payload.folderPath,
+      { sender: window.webContents },
+      payload.includeRaw !== false
+    ),
+    thumbnails: async ({ shouldContinue, reportProgress }) => {
+      const rows = db.exec('SELECT id, path, ext FROM photos WHERE thumb_path IS NULL').at(0)?.values || [];
+      let fixed = 0;
+      for (const [index, row] of rows.entries()) {
+        await shouldContinue();
+        const [id, photoPath, ext] = row;
+        const thumbPath = await generateThumb(photoPath, id, RAW_EXTENSIONS.has(ext));
+        if (thumbPath) {
+          db.run('UPDATE photos SET thumb_path = ?, color_hash = ? WHERE id = ?', [thumbPath, computeColorHash(thumbPath), id]);
+          fixed++;
+        }
+        reportProgress(index + 1, rows.length, `已修复 ${fixed} 张`);
+      }
+      return { fixed, total: rows.length };
+    },
+    watermark: async ({ payload, shouldContinue, reportProgress }) => {
+      const watermarkPath = await getWatermarkSetting();
+      if (!watermarkPath || !fs.existsSync(watermarkPath)) throw new Error('请先导入水印');
+      let done = 0, failed = 0;
+      for (const [index, id] of payload.ids.entries()) {
+        await shouldContinue();
+        try { await applyWatermarkToPhoto(id, watermarkPath, payload.options || {}); done++; }
+        catch (error) { failed++; console.error(`Watermark job failed for ${id}:`, error.message); }
+        reportProgress(index + 1, payload.ids.length, `${done} 成功 / ${failed} 失败`);
+      }
+      saveDb();
+      return { done, failed, total: payload.ids.length };
+    },
+    compression: async ({ payload, shouldContinue, reportProgress }) => {
+      let done = 0, failed = 0;
+      for (const [index, id] of payload.ids.entries()) {
+        await shouldContinue();
+        try { await compressPhotoToPhoto(id, payload.options || {}); done++; }
+        catch { failed++; }
+        reportProgress(index + 1, payload.ids.length, `${done} 成功 / ${failed} 失败`);
+      }
+      saveDb();
+      return { done, failed, total: payload.ids.length };
+    },
+    'ai-tags': async ({ payload, shouldContinue, reportProgress }) => {
+      const keyRow = getStoredGeminiKey();
+      if (!keyRow) throw new Error('请先配置 Gemini API Key');
+      let success = 0, failed = 0;
+      for (const [index, id] of payload.ids.entries()) {
+        await shouldContinue();
+        try {
+          const photoPath = db.exec('SELECT path FROM photos WHERE id = ?', [id]).at(0)?.values?.[0]?.[0];
+          if (!photoPath) throw new Error('照片不存在');
+          const imageBuffer = await fsp.readFile(photoPath);
+          const resized = await sharp(imageBuffer, { failOn: 'none' }).resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+          const text = await callGemini(keyRow, resized.toString('base64'), 'image/jpeg');
+          const existing = db.exec('SELECT tags FROM photos WHERE id = ?', [id]).at(0)?.values?.[0]?.[0] || '';
+          const tags = [...new Set([...existing.split(',').map(v => v.trim()).filter(Boolean), ...text.split(/[,，、]/).map(v => v.trim()).filter(Boolean)])].join(',');
+          db.run('UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?', [tags, id]);
+          success++;
+        } catch { failed++; }
+        reportProgress(index + 1, payload.ids.length, `${success} 成功 / ${failed} 失败`);
+      }
+      saveDb();
+      return { success, failed, total: payload.ids.length };
+    }
+  };
+}
+
+async function handleMapTile(request) {
+  const url = new URL(request.url);
+  const [zoom, x, yWithQuery] = url.pathname.replace(/^\/+/, '').split('/');
+  const y = yWithQuery.split('.')[0];
+  if (![zoom, x, y].every(value => /^\d+$/.test(value))) return new Response('Bad tile', { status: 400 });
+  const tilePath = path.join(MAP_TILE_DIR, String(zoom), String(x), `${y}.tile`);
+  async function responseForFile(filePath) {
+    const data = await fsp.readFile(filePath);
+    const type = data[0] === 0xFF && data[1] === 0xD8 ? 'image/jpeg' : 'image/png';
+    return new Response(data, { headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000' } });
+  }
+  if (fs.existsSync(tilePath)) {
+    try { return await responseForFile(tilePath); } catch {}
+  }
+
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const remote = `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${zoom}/${y}/${x}`;
+      const upstream = await fetch(remote, { signal: AbortSignal.timeout(10000) });
+      if (!upstream.ok) throw new Error(`Tile HTTP ${upstream.status}`);
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      await fsp.mkdir(path.dirname(tilePath), { recursive: true });
+      await fsp.writeFile(tilePath, buffer, { flag: 'wx' }).catch(async error => {
+        if (error.code !== 'EEXIST') throw error;
+      });
+      return await responseForFile(tilePath);
+    } catch (error) {
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+  console.error('Map tile failed:', lastError?.message);
+  return new Response('Tile unavailable', { status: 502 });
+}
+
+function registerProtocolHandlers() {
+  protocol.handle('maptile', handleMapTile);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -1244,11 +1329,15 @@ function createWindow() {
 app.whenReady().then(async () => {
   await ensureDirs();
   await initDb();
+  registerProtocolHandlers();
+  jobManager = createJobManager(db, mainWindow, jobHandlers());
   createWindow();
+  jobManager.loadQueuedJobs();
 });
 
-app.on('window-all-closed', () => {
-  if (db) saveDb();
+app.on('window-all-closed', async () => {
+  if (jobManager) await jobManager.dispose();
+  if (db) db.close();
   app.quit();
 });
 
@@ -1282,6 +1371,7 @@ ipcMain.handle('get-photos', (event, options = {}) => {
   if (filter === 'gps') where.push('has_gps = 1');
   if (filter === 'raw') where.push('is_raw = 1');
   if (filter === 'starred') where.push('starred = 1');
+  if (/^[1-5]$/.test(filter)) { where.push('rating >= ?'); params.push(Number(filter)); }
   if (options.dateFrom) { where.push('date_taken >= ?'); params.push(options.dateFrom); }
   if (options.dateTo) { where.push('date_taken <= ?'); params.push(options.dateTo + 'T23:59:59'); }
   if (filter === 'jpg') where.push("ext NOT IN ('.nef','.cr2','.cr3','.arw','.dng','.orf','.raf','.rw2')");
@@ -1301,7 +1391,8 @@ ipcMain.handle('get-photos', (event, options = {}) => {
   const sql = `
     SELECT id, path, filename, ext, size, width, height, date_taken, starred,
            camera_make, camera_model, iso, aperture, shutter, focal_length,
-           gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps, color_hash, edited_at
+           gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps,
+           color_hash, rating, color_label, edited_at
     FROM photos ${whereClause}
     ORDER BY ${sort} ${dir}
     LIMIT ? OFFSET ?
@@ -1407,16 +1498,32 @@ ipcMain.handle('open-file', (event, filePath) => shell.openPath(filePath));
 ipcMain.handle('show-in-folder', (event, filePath) => shell.showItemInFolder(filePath));
 
 ipcMain.handle('save-gemini-key', (event, key) => {
-  db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_key', ?)", [key]);
+  if (!key) {
+    db.run("DELETE FROM settings WHERE key IN ('gemini_key', 'gemini_key_encrypted')");
+    return true;
+  }
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(String(key)).toString('base64');
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_key_encrypted', ?)", [encrypted]);
+    db.run("DELETE FROM settings WHERE key = 'gemini_key'");
+  } else {
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_key', ?)", [key]);
+  }
   saveDb();
   return true;
 });
 
 ipcMain.handle('get-gemini-key', () => {
-  const result = db.exec("SELECT value FROM settings WHERE key = 'gemini_key'");
-  if (!result.length || !result[0].values.length) return null;
-  return result[0].values[0][0];
+  return getStoredGeminiKey();
 });
+
+function getStoredGeminiKey() {
+  const encrypted = db.exec("SELECT value FROM settings WHERE key = 'gemini_key_encrypted'");
+  if (encrypted.at(0)?.values?.[0]?.[0] && safeStorage.isEncryptionAvailable()) {
+    try { return safeStorage.decryptString(Buffer.from(encrypted[0].values[0][0], 'base64')); } catch {}
+  }
+  return db.exec("SELECT value FROM settings WHERE key = 'gemini_key'").at(0)?.values?.[0]?.[0] || null;
+}
 
 async function callGemini(apiKey, base64Image, mimeType) {
   const body = JSON.stringify({
@@ -1442,11 +1549,8 @@ async function callGemini(apiKey, base64Image, mimeType) {
 }
 
 ipcMain.handle('ai-tag-single', async (event, id) => {
-  const apiKeyResult = db.exec("SELECT value FROM settings WHERE key = 'gemini_key'");
-  if (!apiKeyResult.length || !apiKeyResult[0].values.length) {
-    return { ok: false, error: '请先在设置中配置 Gemini API Key' };
-  }
-  const apiKey = apiKeyResult[0].values[0][0];
+  const apiKey = getStoredGeminiKey();
+  if (!apiKey) return { ok: false, error: '请先在设置中配置 Gemini API Key' };
 
   const photoResult = db.exec("SELECT path, ext FROM photos WHERE id = ?", [id]);
   if (!photoResult.length || !photoResult[0].values.length) return { ok: false, error: 'Photo not found' };
@@ -1478,11 +1582,8 @@ ipcMain.handle('ai-tag-single', async (event, id) => {
 });
 
 ipcMain.handle('ai-tag-batch', async (event, ids) => {
-  const apiKeyResult = db.exec("SELECT value FROM settings WHERE key = 'gemini_key'");
-  if (!apiKeyResult.length || !apiKeyResult[0].values.length) {
-    return { ok: false, error: '请先在设置中配置 Gemini API Key' };
-  }
-  const apiKey = apiKeyResult[0].values[0][0];
+  const apiKey = getStoredGeminiKey();
+  if (!apiKey) return { ok: false, error: '请先在设置中配置 Gemini API Key' };
 
   let success = 0;
   let failed = 0;
@@ -1554,6 +1655,7 @@ ipcMain.handle('get-photos-paged', (event, options = {}) => {
   if (filter === 'gps') where.push('has_gps = 1');
   if (filter === 'raw') where.push('is_raw = 1');
   if (filter === 'starred') where.push('starred = 1');
+  if (/^[1-5]$/.test(filter)) { where.push('rating >= ?'); params.push(Number(filter)); }
   if (options.dateFrom) { where.push('date_taken >= ?'); params.push(options.dateFrom); }
   if (options.dateTo) { where.push('date_taken <= ?'); params.push(options.dateTo + 'T23:59:59'); }
   if (filter === 'jpg') where.push("ext NOT IN ('.nef','.cr2','.cr3','.arw','.dng','.orf','.raf','.rw2')");
@@ -1571,7 +1673,8 @@ ipcMain.handle('get-photos-paged', (event, options = {}) => {
   const sql = `
     SELECT id, path, filename, ext, size, width, height, date_taken, starred,
            camera_make, camera_model, iso, aperture, shutter, focal_length,
-           gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps, edited_at
+           gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps,
+           rating, color_label, edited_at
     FROM photos ${whereClause}
     ORDER BY ${sort} ${dir}
     LIMIT ? OFFSET ?
@@ -1600,11 +1703,21 @@ ipcMain.handle('delete-photo-disk', async (event, id) => {
   const r = db.exec("SELECT path, thumb_path FROM photos WHERE id = ?", [id]);
   if (!r.length || !r[0].values.length) return false;
   const [filePath, thumbPath] = r[0].values[0];
-  try { await fsp.unlink(filePath); } catch {}
+  if (filePath) await shell.trashItem(filePath);
   if (thumbPath) { try { await fsp.unlink(thumbPath); } catch {} }
   const prevPath = filePath ? path.join(__dirname, 'data', 'previews', path.basename(filePath, path.extname(filePath)) + '.webp') : null;
   if (prevPath) { try { await fsp.unlink(prevPath); } catch {} }
   db.run("DELETE FROM photos WHERE id = ?", [id]);
+  saveDb();
+  return true;
+});
+
+ipcMain.handle('delete-photo-permanent', async (event, id) => {
+  const row = db.exec('SELECT id FROM photos WHERE id = ?', [id]).at(0)?.values?.[0];
+  if (!row) return false;
+  db.run('DELETE FROM photo_versions WHERE photo_id = ?', [Number(id)]);
+  db.run('DELETE FROM album_photos WHERE photo_id = ?', [Number(id)]);
+  db.run('DELETE FROM photos WHERE id = ?', [Number(id)]);
   saveDb();
   return true;
 });
@@ -1915,6 +2028,18 @@ ipcMain.handle('get-statistics', () => {
     WHERE camera_model IS NOT NULL AND deleted = 0
     GROUP BY camera_model ORDER BY COUNT(*) DESC LIMIT 5
   `);
+  const lenses = db.exec(`
+    SELECT lens_model, COUNT(*) FROM photos
+    WHERE lens_model IS NOT NULL AND deleted = 0 GROUP BY lens_model ORDER BY COUNT(*) DESC LIMIT 8
+  `);
+  const focalLengths = db.exec(`
+    SELECT ROUND(focal_length), COUNT(*) FROM photos
+    WHERE focal_length IS NOT NULL AND deleted = 0 GROUP BY ROUND(focal_length) ORDER BY ROUND(focal_length)
+  `);
+  const apertures = db.exec(`
+    SELECT ROUND(aperture,1), COUNT(*) FROM photos
+    WHERE aperture IS NOT NULL AND deleted = 0 GROUP BY ROUND(aperture,1) ORDER BY 1
+  `);
   const locations = db.exec(`
     SELECT CAST(gps_lat * 10 AS INT)/10.0 || ',' || CAST(gps_lon * 10 AS INT)/10.0 as loc, COUNT(*)
     FROM photos WHERE has_gps = 1 AND deleted = 0
@@ -1928,6 +2053,9 @@ ipcMain.handle('get-statistics', () => {
   return {
     monthly: rows(monthly),
     cameras: rows(cameras),
+    lenses: rows(lenses),
+    focalLengths: rows(focalLengths),
+    apertures: rows(apertures),
     locations: rows(locations),
     starred, total, withGps
   };
@@ -2131,11 +2259,7 @@ ipcMain.handle('apply-photo-edit', async (event, id, presetId, intensity = 100) 
   try {
     const result = await renderEditedImage(id, presetId, intensity, 'final');
     await regenerateThumbnailFromImage(id, result.path);
-    db.run("UPDATE photos SET edit_path = ?, edit_settings = ?, edited_at = datetime('now') WHERE id = ?", [
-      result.path,
-      JSON.stringify({ presetId, intensity, name: result.name }),
-      id
-    ]);
+    await setPhotoEdit(id, result.path, { presetId, intensity, name: result.name }, 'edit', EDIT_ENGINE_VERSION);
     saveDb();
     return { ok: true, path: result.path, name: result.name };
   } catch (err) {
@@ -2167,6 +2291,7 @@ ipcMain.handle('reset-photo-edit', async (event, id) => {
         }
       }
     }
+    db.run("UPDATE photo_versions SET is_active = 0 WHERE photo_id = ?", [Number(id)]);
     db.run("UPDATE photos SET edit_path = NULL, edit_settings = NULL, edited_at = NULL WHERE id = ?", [id]);
     saveDb();
     return { ok: true };
@@ -2189,6 +2314,156 @@ ipcMain.handle('export-photo-edit', async (event, id) => {
   if (result.canceled || !result.filePath) return { ok: false };
   await fsp.copyFile(editPath, result.filePath);
   return { ok: true, path: result.filePath };
+});
+
+ipcMain.handle('set-rating', (event, id, rating) => {
+  const value = Math.max(0, Math.min(5, Number(rating) || 0));
+  db.run('UPDATE photos SET rating = ?, xmp_synced = 0 WHERE id = ?', [value, Number(id)]);
+  saveDb();
+  return value;
+});
+
+ipcMain.handle('set-color-label', (event, id, color) => {
+  const allowed = new Set(['', 'red', 'yellow', 'green', 'blue']);
+  const value = allowed.has(color) ? color : '';
+  db.run('UPDATE photos SET color_label = ?, xmp_synced = 0 WHERE id = ?', [value, Number(id)]);
+  saveDb();
+  return value;
+});
+
+ipcMain.handle('get-photo-versions', (event, id) => {
+  const result = db.exec(`
+    SELECT v.id, v.photo_id, v.version_type, v.path, v.settings_json, v.engine,
+           v.metadata_policy, v.size, v.is_active, v.created_at
+    FROM photo_versions v WHERE v.photo_id = ? ORDER BY v.created_at DESC, v.id DESC
+  `, [Number(id)]);
+  if (!result.length) return [];
+  const cols = result[0].columns;
+  return result[0].values.map(values => Object.fromEntries(cols.map((col, index) => [col, values[index]])));
+});
+
+ipcMain.handle('activate-photo-version', async (event, id, versionId) => {
+  const row = db.exec('SELECT path FROM photo_versions WHERE id = ? AND photo_id = ?', [
+    Number(versionId), Number(id)
+  ]).at(0)?.values?.[0];
+  const original = db.exec('SELECT version_type FROM photo_versions WHERE id = ? AND photo_id = ?', [
+    Number(versionId), Number(id)
+  ]).at(0)?.values?.[0]?.[0] === 'original';
+  if (!row) return { ok: false, error: '版本不存在' };
+  const versionPath = row[0];
+  await activatePhotoVersion(id, versionPath);
+  if (original) {
+    db.run("UPDATE photos SET edit_path = NULL, edit_settings = NULL, edited_at = NULL WHERE id = ?", [Number(id)]);
+    const source = db.exec('SELECT path, ext, is_raw FROM photos WHERE id = ?', [Number(id)]).at(0)?.values?.[0];
+    if (source) await generateThumb(source[0], Number(id), Boolean(source[2]));
+  } else {
+    db.run("UPDATE photos SET edit_path = ?, edited_at = datetime('now') WHERE id = ?", [versionPath, Number(id)]);
+    await regenerateThumbnailFromImage(Number(id), versionPath);
+  }
+  saveDb();
+  return { ok: true };
+});
+
+ipcMain.handle('list-albums', () => {
+  const result = db.exec('SELECT id, name, kind, query_json, sort_order FROM albums ORDER BY sort_order, name').at(0);
+  return result?.values.map(([id, name, kind, queryJson, sortOrder]) => ({
+    id, name, kind, sort_order: sortOrder,
+    query: (() => { try { return JSON.parse(queryJson || 'null'); } catch { return null; } })()
+  })) || [];
+});
+
+ipcMain.handle('create-album', (event, name, kind = 'manual', query = null) => {
+  if (!String(name || '').trim()) throw new Error('相册名称不能为空');
+  const result = db.run('INSERT OR IGNORE INTO albums (name, kind, query_json) VALUES (?, ?, ?)', [
+    String(name).trim(), ['manual','smart'].includes(kind) ? kind : 'manual', JSON.stringify(query || null)
+  ]);
+  saveDb();
+  return { ok: Number(result.changes) > 0 };
+});
+
+ipcMain.handle('delete-album', (event, id) => {
+  db.run('DELETE FROM albums WHERE id = ?', [Number(id)]);
+  saveDb();
+  return true;
+});
+
+ipcMain.handle('add-photos-to-album', (event, albumId, ids) => {
+  for (const id of ids || []) {
+    db.run('INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)', [Number(albumId), Number(id)]);
+  }
+  saveDb();
+  return true;
+});
+
+ipcMain.handle('remove-photo-from-album', (event, albumId, photoId) => {
+  db.run('DELETE FROM album_photos WHERE album_id = ? AND photo_id = ?', [Number(albumId), Number(photoId)]);
+  saveDb();
+  return true;
+});
+
+ipcMain.handle('get-album-photos', (event, albumId, options = {}) => {
+  const album = db.exec('SELECT kind, query_json FROM albums WHERE id = ?', [Number(albumId)]).at(0)?.values?.[0];
+  if (!album) return [];
+  const [kind, queryJson] = album;
+  if (kind === 'smart') {
+    let query = {};
+    try { query = JSON.parse(queryJson || '{}'); } catch {}
+    return runPhotoQuery({ ...options, ...query });
+  }
+  const result = db.exec(`
+    SELECT p.* FROM photos p JOIN album_photos ap ON ap.photo_id = p.id
+    WHERE ap.album_id = ? AND p.deleted = 0 ORDER BY p.date_taken DESC
+  `, [Number(albumId)]);
+  if (!result.length) return [];
+  const cols = result[0].columns;
+  return result[0].values.map(values => Object.fromEntries(cols.map((col,index)=>[col,values[index]])));
+});
+
+function runPhotoQuery(options = {}) {
+  const where = ['deleted = 0']; const params = [];
+  if (options.filter === 'gps') where.push('has_gps = 1');
+  if (options.filter === 'raw') where.push('is_raw = 1');
+  if (options.filter === 'jpg') where.push("ext IN ('.jpg','.jpeg')");
+  if (/^[1-5]$/.test(String(options.minRating))) { where.push('rating >= ?'); params.push(Number(options.minRating)); }
+  if (options.colorLabel) { where.push('color_label = ?'); params.push(options.colorLabel); }
+  if (options.searchQuery) { where.push('(filename LIKE ? OR tags LIKE ?)'); const q=`%${options.searchQuery}%`; params.push(q,q); }
+  const rows = db.exec(`SELECT * FROM photos WHERE ${where.join(' AND ')} ORDER BY date_taken DESC LIMIT ? OFFSET ?`, [...params, Number(options.limit||500), Number(options.offset||0)]);
+  if (!rows.length) return [];
+  const cols=rows[0].columns;
+  return rows[0].values.map(values=>Object.fromEntries(cols.map((c,i)=>[c,values[i]])));
+}
+
+ipcMain.handle('job-start', (event, type, payload, options) => jobManager.submit(type, payload, options));
+ipcMain.handle('job-list', () => jobManager.list());
+ipcMain.handle('job-pause', (event,id) => jobManager.pause(id));
+ipcMain.handle('job-resume', (event,id) => jobManager.resume(id));
+ipcMain.handle('job-cancel', (event,id) => jobManager.cancel(id));
+ipcMain.handle('job-retry', (event,id) => jobManager.retry(id));
+ipcMain.handle('job-clear-finished', () => jobManager.clearFinished());
+
+let lastGeocodeAt = 0;
+ipcMain.handle('reverse-geocode', async (event, lat, lon) => {
+  const roundedLat = Math.round(Number(lat) * 10000) / 10000;
+  const roundedLon = Math.round(Number(lon) * 10000) / 10000;
+  if (!Number.isFinite(roundedLat) || !Number.isFinite(roundedLon)) throw new Error('坐标无效');
+  const cacheKey = `${roundedLat.toFixed(4)},${roundedLon.toFixed(4)}`;
+  const cached = db.exec('SELECT display_name, address_json FROM reverse_geocode_cache WHERE cache_key = ?', [cacheKey]).at(0)?.values?.[0];
+  if (cached) return { displayName: cached[0], address: (()=>{try{return JSON.parse(cached[1]||'{}')}catch{return{}}})(), cached:true };
+  const wait = Math.max(0, 1100 - (Date.now() - lastGeocodeAt));
+  if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+  lastGeocodeAt = Date.now();
+  const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${roundedLat}&lon=${roundedLon}&accept-language=zh-CN`, {
+    headers: { 'User-Agent': 'PhoneBL/1.0 (https://github.com/blueicx/PhoneBL)' },
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
+  const data = await response.json();
+  db.run(`INSERT INTO reverse_geocode_cache (cache_key,lat,lon,display_name,address_json) VALUES (?,?,?,?,?)
+    ON CONFLICT(cache_key) DO UPDATE SET display_name=excluded.display_name, address_json=excluded.address_json`, [
+    cacheKey, roundedLat, roundedLon, data.display_name || '', JSON.stringify(data.address || {})
+  ]);
+  saveDb();
+  return { displayName: data.display_name || '', address: data.address || {}, cached:false };
 });
 ipcMain.handle('window-minimize', () => mainWindow.minimize());
 ipcMain.handle('window-maximize', () => {
