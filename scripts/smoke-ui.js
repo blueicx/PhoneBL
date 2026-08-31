@@ -149,6 +149,41 @@ async function main() {
     })()`);
     check('overlapping loads do not strand skeletons', race.skeletons === 0 && race.cards > 0, race);
 
+    const selection = await cdp.evaluate(`(async () => {
+      document.getElementById('main-content').focus();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+      await new Promise(r => setTimeout(r, 200));
+      const selected = selectedIds.size;
+      const total = galleryTotal;
+      const visibleCards = document.querySelectorAll('.photo-card').length;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+      await new Promise(r => setTimeout(r, 100));
+      return { selected, total, visibleCards, afterToggle: selectedIds.size, button: document.getElementById('btn-select-all')?.textContent };
+    })()`);
+    check('Ctrl+A selects the complete filtered result set', selection.selected === selection.total && selection.total > selection.visibleCards, selection);
+    check('Ctrl+A toggles the complete selection off', selection.afterToggle === 0, selection);
+
+    const inputGuard = await cdp.evaluate(`(() => {
+      const input = document.getElementById('search-input');
+      input.focus();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+      return { selected: selectedIds.size, activeTag: document.activeElement?.tagName };
+    })()`);
+    check('Ctrl+A remains available to text inputs', inputGuard.selected === 0 && inputGuard.activeTag === 'INPUT', inputGuard);
+
+    const comparison = await cdp.evaluate(`(async () => {
+      document.getElementById('main-content').focus();
+      const ids = galleryItems.filter(Boolean).slice(0, 2).map(photo => Number(photo.id));
+      selectedIds = new Set(ids);
+      await openComparison();
+      await new Promise(r => setTimeout(r, 300));
+      const result = { ids, visible: !document.getElementById('compare-modal').classList.contains('hidden'), panes: document.querySelectorAll('.compare-pane').length };
+      document.getElementById('compare-modal').classList.add('hidden');
+      clearSelection();
+      return result;
+    })()`);
+    check('comparison view opens for two selected photos', comparison.ids.length === 2 && comparison.visible && comparison.panes === 2, comparison);
+
     const ai = await cdp.evaluate(`(async () => {
       document.querySelector('[data-view="settings"]').click();
       await new Promise(r => setTimeout(r, 800));
@@ -179,6 +214,28 @@ async function main() {
       markers: document.querySelectorAll('.leaflet-marker-icon').length
     })`);
     check('map reports tile and marker counts', true, map);
+
+    const heatmap = await cdp.evaluate(`(async () => {
+      document.getElementById('btn-map-mode').click();
+      await new Promise(r => setTimeout(r, 300));
+      return { mode: mapHeatMode, layer: Boolean(heatLayer), hint: document.getElementById('map-mode-hint')?.textContent };
+    })()`);
+    check('map heatmap mode renders local GPS cells', heatmap.mode && heatmap.layer, heatmap);
+
+    const trips = await cdp.evaluate(`(async () => {
+      document.querySelector('[data-view="trips"]').click();
+      await new Promise(r => setTimeout(r, 500));
+      return { summary: document.getElementById('trips-summary')?.textContent, cards: document.querySelectorAll('.trip-card').length, empty: document.querySelector('.stats-empty')?.textContent || '' };
+    })()`);
+    check('trips view loads a usable state', trips.cards > 0 || Boolean(trips.empty), trips);
+
+    const clip = await cdp.evaluate(`(async () => {
+      document.querySelector('[data-view="search"]').click();
+      await new Promise(r => setTimeout(r, 300));
+      const status = await mapApi.getClipStatus();
+      return { configured: status.configured, text: document.getElementById('clip-status')?.textContent };
+    })()`);
+    check('local CLIP reports configuration state without network fallback', clip.configured === false && clip.text === '未配置本地模型', clip);
 
     check('no uncaught renderer errors', cdp.exceptions.length === 0, cdp.exceptions.slice(0, 4));
     cdp.close();

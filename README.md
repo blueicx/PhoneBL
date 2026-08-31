@@ -9,12 +9,15 @@ PhoneBL 是一款面向旅行照片的本地优先照片管理工具，支持照
 ### 主要功能
 
 - 照片库：增量分页加载、JPG/RAW 筛选、排序、评分与色标。
+- 图库效率：真正的虚拟滚动、当前筛选结果跨分页全选、`Ctrl+A`、保存搜索。
 - 版本栈：修图、水印和压缩都生成可切换副本，原图始终保留；首次升级前会自动备份数据库。
 - 任务中心：扫描、AI 标签、水印、压缩等任务支持进度、暂停、继续、取消和失败重试。
-- 照片地图：本地瓦片缓存、透明蓝灰底图、GPS 坐标展示、位置分组和旅行路线可视化。
-- 批量操作：标签、重命名、回收站删除、永久删除确认、水印、压缩。
+- 照片地图：本地瓦片缓存、透明蓝灰底图、GPS 坐标展示、位置分组、旅行路线和 GPS 热力图。
+- 旅程与对比：自动按时间切分旅程、聚合停留点，并支持最多四张照片并排对比。
+- 批量操作：标签、重命名、回收站删除、永久删除确认、水印、压缩和 XMP sidecar 写回。
 - 编辑工具：LR 预设近似还原、非破坏性编辑副本、导出副本。
 - AI 能力：自动场景标签，支持 Google Gemini 或任意 OpenAI 兼容接口（可自定义模型、接口地址、提示词）；API Key 使用 Electron SafeStorage 加密保存在本机。
+- 本地语义搜索：可选配置本地 CLIP/Transformers 模型建立向量索引；未配置模型时不会联网，也不影响普通搜索。
 - 其他功能：相似照片检测、连拍识别、统计面板、幻灯片放映。
 
 ### 快速开始
@@ -48,6 +51,16 @@ npm start
 | `Esc` | 关闭当前预览 |
 | `Delete` | 将选中照片移入回收站 |
 | `Ctrl+点击` | 选择或取消选择照片 |
+| `Ctrl+A` | 选择当前筛选/搜索结果的全部照片；再次按下取消全选 |
+
+“全选”只作用于当前查询结果，包含尚未滚动加载的照片。批量栏会显示完整选择数量；搜索框、日期控件和其他表单获得焦点时，`Ctrl+A` 保留 Windows 默认文本全选行为。
+
+### 保存搜索、XMP、旅程与本地 CLIP
+
+- 在图库工具栏点击“保存搜索”可保存当前关键词、筛选、日期和排序；可从下拉框恢复或删除。
+- 选中照片后点击“写入 XMP”，会在原图旁生成 `<原文件名>.xmp`，写入标签、评分和色标，不覆盖原图。
+- “旅程”视图按 GPS 照片的时间间隔自动分段，并显示停留点；地图中的“显示热力图”使用本地 GPS 网格聚合。
+- “搜索”视图可填写本地模型目录并建立 CLIP 索引。模型必须已在本机准备好；程序不会为语义搜索自动下载或上传照片。
 
 首次启动后，选择包含 JPG、PNG、WebP 或 NEF 等 RAW 文件的照片文件夹进行扫描。扫描结果、缩略图和编辑副本会保存在本地 `data/` 目录中；该目录已被 Git 忽略。
 
@@ -101,12 +114,15 @@ PhoneBL is a local-first photo manager for travel photography. It provides libra
 ### Features
 
 - Photo library: incremental paging, JPG/RAW filters, sorting, ratings, and color labels.
+- Gallery efficiency: true virtual scrolling, cross-page select-all for the current query, `Ctrl+A`, and saved searches.
 - Version stack: edits, watermarks, and compression create switchable copies while preserving originals; the database is backed up before first upgrade.
 - Job center: scan, AI-tagging, watermark, and compression jobs support progress, pause/resume, cancellation, and retry.
-- Photo map: cached tiles, a transparent blue-grey basemap, GPS visualization, location groups, and travel routes.
-- Batch operations: tags, renaming, recycle-bin deletion, permanent-delete confirmation, watermarks, and compression.
+- Photo map: cached tiles, a transparent blue-grey basemap, GPS visualization, location groups, travel routes, and a GPS heatmap.
+- Trips and comparison: automatic trip splitting, stay-point clustering, and side-by-side comparison for up to four photos.
+- Batch operations: tags, renaming, recycle-bin deletion, permanent-delete confirmation, watermarks, compression, and XMP sidecar writes.
 - Editing: approximate Lightroom preset support, non-destructive edit copies, and export.
 - AI features: automatic scene tagging with Google Gemini or any OpenAI-compatible endpoint (custom model, base URL, and prompt); the API key is encrypted on disk with Electron SafeStorage.
+- Local semantic search: optionally configure a local CLIP/Transformers model and build a vector index; no network fallback is used when it is unavailable.
 - Extras: similar-photo detection, burst detection, statistics, and slideshow playback.
 
 ### Quick Start
@@ -140,6 +156,16 @@ The recognition prompt is editable and falls back to a default that asks for up 
 | `Esc` | Close the active preview |
 | `Delete` | Move selected photos to the Recycle Bin |
 | `Ctrl+Click` | Select or deselect a photo |
+| `Ctrl+A` | Select all photos in the current filtered/search result; press again to clear |
+
+Select-all applies to the complete current query, including photos not yet scrolled into view. Text fields, date controls, and other form elements retain the normal Windows text-selection behavior.
+
+### Saved Searches, XMP, Trips, and Local CLIP
+
+- “Save Search” stores the current keyword, filters, date range, and sort order; restore or delete it from the toolbar menu.
+- “Write XMP” creates `<original filename>.xmp` beside each selected original and writes tags, rating, and color label without overwriting the photo.
+- The Trips view splits GPS photos by time gaps and shows stay points; the map heatmap uses local GPS grid aggregation.
+- The Search view accepts a local model directory for CLIP indexing. The model must already exist locally; semantic search never downloads a model or uploads photos automatically.
 
 After the first launch, select a folder containing JPG, PNG, WebP, NEF, or other supported images. Scans, thumbnails, and edited copies are stored under local `data/`; that directory is ignored by Git.
 
@@ -169,7 +195,7 @@ scripts/           Test and UI smoke-check harnesses
 data/              Local runtime data, not committed
 ```
 
-Local checks: `npm run lint` for syntax, `npm test` for unit and migration tests, and `npm run smoke` to boot the real UI and verify gallery paging plus the AI settings panel.
+Local checks: `npm run lint` for syntax, `npm test` for unit and migration tests, and `npm run smoke` to boot the real UI and verify virtual gallery paging, cross-page selection, comparison, map heatmap, trips, local CLIP state, and the AI settings panel.
 
 ### License
 

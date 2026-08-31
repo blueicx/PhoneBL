@@ -46,6 +46,7 @@ let savedSearches = [];
 let galleryItems = [];
 let galleryTotal = 0;
 let galleryPageCache = new Map();
+let galleryPagePromises = new Map();
 let galleryWindowToken = 0;
 const galleryFetchSize = 160;
 
@@ -97,6 +98,7 @@ async function loadPhotos(options = {}) {
   galleryOffset = 0; galleryDone = false; galleryLoading = false; detailNavList = [];
   galleryItems = [];
   galleryPageCache = new Map();
+  galleryPagePromises = new Map();
   galleryWindowToken++;
   try {
     galleryTotal = await api.getPhotoCount(currentGalleryQuery);
@@ -116,12 +118,22 @@ async function loadPhotos(options = {}) {
 }
 
 async function fetchGalleryPage(page, seq = gallerySeq) {
-  if (galleryPageCache.has(page)) return;
-  galleryPageCache.set(page, null);
-  const photos = await api.getPhotos({ ...currentGalleryQuery, offset: page * galleryFetchSize, limit: galleryFetchSize });
-  if (seq !== gallerySeq) return;
-  photos.forEach((photo, index) => { galleryItems[page * galleryFetchSize + index] = photo; });
-  galleryPageCache.set(page, true);
+  if (galleryPageCache.get(page) === true) return;
+  if (galleryPagePromises.has(page)) return galleryPagePromises.get(page);
+
+  const pageCache = galleryPageCache;
+  const pagePromises = galleryPagePromises;
+  const request = api.getPhotos({ ...currentGalleryQuery, offset: page * galleryFetchSize, limit: galleryFetchSize })
+    .then(photos => {
+      if (seq !== gallerySeq) return;
+      photos.forEach((photo, index) => { galleryItems[page * galleryFetchSize + index] = photo; });
+      pageCache.set(page, true);
+    })
+    .finally(() => {
+      if (pagePromises.get(page) === request) pagePromises.delete(page);
+    });
+  pagePromises.set(page, request);
+  return request;
 }
 
 async function appendPhotos(query = currentGalleryQuery, seq = gallerySeq) {
@@ -139,7 +151,7 @@ async function ensureGalleryRange(start, end, seq = gallerySeq) {
   const lastPage = Math.floor(Math.max(0, end - 1) / galleryFetchSize);
   const pages = [];
   for (let page = firstPage; page <= lastPage; page++) {
-    if (!galleryPageCache.has(page)) pages.push(fetchGalleryPage(page, seq));
+    if (galleryPageCache.get(page) !== true) pages.push(fetchGalleryPage(page, seq));
   }
   await Promise.all(pages);
 }
