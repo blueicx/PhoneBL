@@ -10,10 +10,22 @@ function normalizePolicy(policy) {
   return POLICIES.has(policy) ? policy : 'keep-all';
 }
 
+async function resolveExiftoolPath() {
+  const configuredPath = typeof exiftool.exiftoolPath === 'function'
+    ? exiftool.exiftoolPath()
+    : exiftool.exiftoolPath;
+  const executablePath = await configuredPath;
+  if (typeof executablePath !== 'string' || !executablePath) {
+    throw new Error('无法定位 ExifTool 可执行文件');
+  }
+  return executablePath;
+}
+
 async function applyMetadataPolicy(outputPath, sourcePath, policy = 'keep-all') {
   const normalized = normalizePolicy(policy);
+  const executablePath = await resolveExiftoolPath();
   if (normalized === 'keep-all') {
-    await run(exiftool.exiftoolPath, [
+    await run(executablePath, [
       '-overwrite_original', '-TagsFromFile', sourcePath,
       '-Exif:All', '-XMP:All', '-IPTC:All', outputPath
     ], { windowsHide: true });
@@ -21,7 +33,7 @@ async function applyMetadataPolicy(outputPath, sourcePath, policy = 'keep-all') 
   }
 
   if (normalized === 'remove-gps') {
-    await run(exiftool.exiftoolPath, [
+    await run(executablePath, [
       '-overwrite_original', '-TagsFromFile', sourcePath,
       '-Exif:All', '-XMP:All', '-IPTC:All',
       '-GPS:All=', '-XMP:GPSLatitude=', '-XMP:GPSLongitude=',
@@ -30,7 +42,7 @@ async function applyMetadataPolicy(outputPath, sourcePath, policy = 'keep-all') 
     return normalized;
   }
 
-  await run(exiftool.exiftoolPath, [
+  await run(executablePath, [
     '-overwrite_original', '-Exif:All=', '-XMP:All=', '-IPTC:All=',
     '-TagsFromFile', sourcePath,
     '-Exif:DateTimeOriginal', '-Exif:Make', '-Exif:Model',
@@ -41,7 +53,7 @@ async function applyMetadataPolicy(outputPath, sourcePath, policy = 'keep-all') 
 }
 
 async function readMetadata(filePath) {
-  const result = await run(exiftool.exiftoolPath, ['-j', '-n', filePath], {
+  const result = await run(await resolveExiftoolPath(), ['-j', '-n', filePath], {
     windowsHide: true, maxBuffer: 1024 * 1024
   });
   try { return JSON.parse(result.stdout)[0] || {}; } catch { return {}; }
@@ -63,11 +75,14 @@ async function writeXmpSidecar(photo, deps = {}) {
   const runner = deps.run || run;
   const sidecarPath = deps.sidecarPath || `${photo.path}.xmp`;
   try {
-    await runner(exiftool.exiftoolPath, buildXmpWriteArgs(photo, sidecarPath), { windowsHide: true });
+    await runner(await resolveExiftoolPath(), buildXmpWriteArgs(photo, sidecarPath), { windowsHide: true });
     return { ok: true, synced: true, sidecarPath };
   } catch (error) {
     return { ok: false, synced: false, error: error.message || String(error) };
   }
 }
 
-module.exports = { applyMetadataPolicy, readMetadata, normalizePolicy, buildXmpWriteArgs, writeXmpSidecar };
+module.exports = {
+  applyMetadataPolicy, readMetadata, normalizePolicy, resolveExiftoolPath,
+  buildXmpWriteArgs, writeXmpSidecar
+};
