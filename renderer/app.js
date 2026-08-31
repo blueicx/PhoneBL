@@ -294,6 +294,35 @@ function applySavedSearch(search) {
   void loadPhotos(query);
 }
 
+async function openComparison() {
+  const ids = [...selectedIds];
+  if (ids.length < 2) { showToast('请至少选择两张照片进行对比'); return; }
+  const visibleIds = ids.slice(0, 4);
+  const grid = document.getElementById('compare-grid');
+  grid.innerHTML = '<p>正在加载对比照片...</p>';
+  document.getElementById('compare-modal').classList.remove('hidden');
+  const details = await Promise.all(visibleIds.map(id => api.getPhotoDetail(id)));
+  const images = await Promise.all(visibleIds.map(id => api.getDisplayPhoto(id, true)));
+  grid.innerHTML = '';
+  details.forEach((detail, index) => {
+    if (!detail) return;
+    const pane = document.createElement('article');
+    pane.className = 'compare-pane';
+    const gps = detail.has_gps ? `${Number(detail.gps_lat).toFixed(5)}, ${Number(detail.gps_lon).toFixed(5)}` : '无';
+    pane.innerHTML = `<img src="${images[index] ? localFileUrl(images[index]) : ''}" alt="${escapeHtml(detail.filename)}" />
+      <h4 title="${escapeHtml(detail.filename)}">${escapeHtml(detail.filename)}</h4>
+      <dl class="compare-meta">
+        <dt>日期</dt><dd>${escapeHtml(detail.date_taken || '未知')}</dd>
+        <dt>尺寸</dt><dd>${Number(detail.width) || 0} × ${Number(detail.height) || 0}</dd>
+        <dt>评分</dt><dd>${Number(detail.rating) || 0}★</dd>
+        <dt>GPS</dt><dd>${escapeHtml(gps)}</dd>
+        <dt>版本</dt><dd>${detail.edited_at ? '已编辑副本' : '原图'}</dd>
+      </dl>`;
+    grid.appendChild(pane);
+  });
+  if (ids.length > 4) showToast('已按当前选择顺序展示前 4 张照片');
+}
+
 async function selectAllCurrentResults() {
   const button = document.getElementById('btn-select-all');
   if (button) button.disabled = true;
@@ -1203,6 +1232,11 @@ document.getElementById('btn-batch-clear').addEventListener('click', () => {
 
 document.getElementById('btn-select-all').addEventListener('click', selectAllCurrentResults);
 document.getElementById('btn-batch-select-all').addEventListener('click', selectAllCurrentResults);
+document.getElementById('btn-compare').addEventListener('click', openComparison);
+document.getElementById('btn-close-compare').addEventListener('click', () => document.getElementById('compare-modal').classList.add('hidden'));
+document.getElementById('compare-modal').addEventListener('click', event => {
+  if (event.target === event.currentTarget) event.currentTarget.classList.add('hidden');
+});
 document.getElementById('btn-save-search').addEventListener('click', async () => {
   const name = prompt('为当前搜索输入名称：');
   if (name === null) return;

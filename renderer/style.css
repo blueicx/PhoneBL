@@ -276,6 +276,27 @@ body {
   transition: transform .2s ease, box-shadow .2s ease, border-color .2s;
   position: relative;
 }
+
+.compare-modal-content {
+  width: min(1400px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
+}
+
+.compare-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.compare-header h3 { margin: 0; }
+.compare-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.compare-pane { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-tertiary); }
+.compare-pane img { width: 100%; aspect-ratio: 1; object-fit: contain; background: #05070b; border-radius: 7px; }
+.compare-pane h4 { margin: 8px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.compare-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; font-size: 11px; color: var(--text-secondary); }
+.compare-meta dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+@media (max-width: 900px) { .compare-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .photo-card:hover {
   transform: translateY(-4px) scale(1.02);
   box-shadow: 0 8px 30px rgba(0,0,0,.5);

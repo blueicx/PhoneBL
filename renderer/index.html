@@ -312,11 +312,22 @@
     </div>
   </div>
 
+  <div id="compare-modal" class="modal-overlay hidden">
+    <div class="compare-modal-content">
+      <div class="compare-header">
+        <h3>照片对比</h3>
+        <button id="btn-close-compare" class="btn-secondary">关闭</button>
+      </div>
+      <div id="compare-grid" class="compare-grid"></div>
+    </div>
+  </div>
+
   <!-- Batch Toolbar -->
   <div id="batch-bar" class="batch-bar hidden">
     <span id="batch-count"></span>
     <button id="btn-batch-select-all">全选</button>
     <button id="btn-batch-clear">取消选择</button>
+    <button id="btn-compare" class="accent">🔎 对比</button>
     <button id="btn-batch-ai-tag" class="accent">✨ 批量 AI 标签</button>
     <button id="btn-batch-star">⭐ 标星</button>
     <button id="btn-batch-xmp" class="accent">📝 写入 XMP</button>
