@@ -9,7 +9,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { openPhotoDatabase } = require('../src/database');
 
 test('legacy databases are backed up and migrated to version stacks', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'phonebl-db-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bluphmap-db-'));
   const dbPath = path.join(root, 'photos.db');
   const legacy = new DatabaseSync(dbPath);
   legacy.exec(`

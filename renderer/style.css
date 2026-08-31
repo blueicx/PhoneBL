@@ -59,7 +59,7 @@ body {
   align-items: center;
   gap: 8px;
 }
-.app-icon { font-size: 16px; }
+.app-icon { width: 22px; height: 22px; border-radius: 6px; display: block; }
 .app-name {
   font-weight: 600;
   font-size: 13px;

@@ -1,10 +1,10 @@
-# PhoneBL
+# BluPhMap
 
 [中文](#中文) | [English](#english)
 
 ## 中文
 
-PhoneBL 是一款面向旅行照片的本地优先照片管理工具，支持照片库浏览、地图定位、批量处理、AI 标签、水印、压缩、轻量修图与幻灯片放映。项目基于 Electron 构建，原图不会被编辑操作覆盖；照片文件保留在本地，不会上传到云端。
+BluPhMap 是一款面向旅行照片的本地优先照片管理工具，支持照片库浏览、地图定位、批量处理、AI 标签、水印、压缩、轻量修图与幻灯片放映。项目基于 Electron 构建，原图不会被编辑操作覆盖；照片文件保留在本地，不会上传到云端。
 
 ### 主要功能
 
@@ -109,7 +109,7 @@ Copyright (c) 2026 吴家希（WJX）
 
 ## English
 
-PhoneBL is a local-first photo manager for travel photography. It provides library browsing, map-based organization, batch tools, AI tagging, watermarks, compression, lightweight editing, and a slideshow mode. The app is built with Electron and keeps original photos untouched by edits.
+BluPhMap is a local-first photo manager for travel photography. It provides library browsing, map-based organization, batch tools, AI tagging, watermarks, compression, lightweight editing, and a slideshow mode. The app is built with Electron and keeps original photos untouched by edits.
 
 ### Features
 

@@ -105,7 +105,7 @@ function check(name, ok, detail) {
 }
 
 async function main() {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebl-smoke-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bluphmap-smoke-'));
   const child = spawn(electronBin, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`], {
     cwd: ROOT,
     env: { ...process.env },

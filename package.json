@@ -1,7 +1,7 @@
 {
-  "name": "phonebl",
+  "name": "bluphmap",
   "version": "1.0.0",
-  "description": "Open-source photo manager with map, AI tagging, and timeline",
+  "description": "BluPhMap local-first photo manager with map, AI tagging, and timeline",
   "main": "main.js",
   "author": "吴家希（WJX） <51323404+blueicx@users.noreply.github.com> (https://github.com/blueicx)",
   "contributors": [
@@ -17,8 +17,8 @@
     "verify": "npm run lint && npm test"
   },
   "build": {
-    "appId": "com.blueicx.phonebl",
-    "productName": "PhoneBL",
+    "appId": "com.blueicx.bluphmap",
+    "productName": "BluPhMap",
     "directories": {
       "output": "release"
     },
@@ -35,6 +35,7 @@
       "node_modules/exiftool-vendored/**"
     ],
     "win": {
+      "icon": "renderer/icon.ico",
       "target": [
         "nsis",
         "portable"

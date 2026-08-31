@@ -1392,7 +1392,7 @@ app.whenReady().then(async () => {
   jobManager.loadQueuedJobs();
 }).catch(error => {
   logger.error('Application startup failed', { stack: error.stack });
-  dialog.showErrorBox('PhoneBL 启动失败', error.message);
+  dialog.showErrorBox('BluPhMap 启动失败', error.message);
   app.exit(1);
 });
 
@@ -2659,7 +2659,7 @@ ipcMain.handle('reverse-geocode', async (event, lat, lon) => {
   if (wait) await new Promise(resolve => setTimeout(resolve, wait));
   lastGeocodeAt = Date.now();
   const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${roundedLat}&lon=${roundedLon}&accept-language=zh-CN`, {
-    headers: { 'User-Agent': 'PhoneBL/1.0 (https://github.com/blueicx/PhoneBL)' },
+    headers: { 'User-Agent': 'BluPhMap/1.0 (https://github.com/blueicx/PhoneBL)' },
     signal: AbortSignal.timeout(8000)
   });
   if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
