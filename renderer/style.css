@@ -262,6 +262,11 @@ body {
   padding: 20px;
 }
 
+.gallery-spacer {
+  grid-column: 1 / -1;
+  pointer-events: none;
+}
+
 .photo-card {
   border-radius: 10px;
   overflow: hidden;

@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('mapApi', {
   listSavedSearches: () => ipcRenderer.invoke('list-saved-searches'),
   saveSavedSearch: (name, query) => ipcRenderer.invoke('save-saved-search', name, query),
   deleteSavedSearch: (id) => ipcRenderer.invoke('delete-saved-search', id),
-  getPhotoCount: () => ipcRenderer.invoke('get-photo-count'),
+  getPhotoCount: (options) => ipcRenderer.invoke('get-photo-count', options),
   getMapPoints: () => ipcRenderer.invoke('get-map-points'),
   getPhotoDetail: (id) => ipcRenderer.invoke('get-photo-detail', id),
   updateTags: (id, tags) => ipcRenderer.invoke('update-tags', id, tags),

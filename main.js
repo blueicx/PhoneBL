@@ -1450,8 +1450,9 @@ ipcMain.handle('delete-saved-search', (event, id) => {
   return { ok: result.changes > 0 };
 });
 
-ipcMain.handle('get-photo-count', () => {
-  const result = db.exec("SELECT COUNT(*) FROM photos");
+ipcMain.handle('get-photo-count', (event, options = {}) => {
+  const where = buildPhotoWhere(normalizePhotoQuery(options));
+  const result = db.exec(`SELECT COUNT(*) FROM photos ${where.sql}`, where.params);
   return result[0].values[0][0];
 });
 

@@ -40,6 +40,11 @@ let currentGalleryQuery = { filter: '', searchQuery: '', sortBy: 'date_taken', s
 let allResultIds = [];
 let allResultsSelected = false;
 let savedSearches = [];
+let galleryItems = [];
+let galleryTotal = 0;
+let galleryPageCache = new Map();
+let galleryWindowToken = 0;
+const galleryFetchSize = 160;
 
 // --- View Switching ---
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -85,63 +90,114 @@ async function loadPhotos(options = {}) {
   clearSelection();
   currentGalleryQuery = { sortBy, sortDir: 'DESC', filter, searchQuery: searchQ, dateFrom, dateTo };
   galleryOffset = 0; galleryDone = false; galleryLoading = false; detailNavList = [];
-  await appendPhotos(currentGalleryQuery, seq);
-}
-
-async function appendPhotos(query = {}, seq = gallerySeq) {
-  if (galleryLoading || galleryDone) return;
-  const grid = document.getElementById('photo-grid');
-  const empty = document.getElementById('empty-state');
-  galleryLoading = true;
-
+  galleryItems = [];
+  galleryPageCache = new Map();
+  galleryWindowToken++;
   try {
-    const photos = await api.getPhotos({
-      offset: galleryOffset,
-      limit: galleryPageSize,
-      sortBy: query.sortBy || 'date_taken',
-      sortDir: 'DESC',
-      filter: query.filter || '',
-      searchQuery: query.searchQuery || '',
-      dateFrom: query.dateFrom || '',
-      dateTo: query.dateTo || ''
-    });
-    // A newer loadPhotos() already rebuilt the grid; drop these stale cards so
-    // they cannot pile up underneath the new placeholders.
+    galleryTotal = await api.getPhotoCount(currentGalleryQuery);
     if (seq !== gallerySeq) return;
-    if (!photos.length && galleryOffset === 0) {
-      grid.innerHTML = '';
-      empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">📷</div><p>还没有照片，点击上方按钮扫描文件夹</p>';
-      empty.classList.remove('hidden');
-      galleryDone = true;
-      return;
-    }
-    empty.classList.add('hidden');
-    // Real cards replace the placeholders; leaving them behind made the first
-    // page look permanently stuck on "loading".
-    grid.querySelectorAll('.skeleton-card').forEach(el => el.remove());
-    detailNavList.push(...photos);
-    const frag = document.createDocumentFragment();
-    for (const photo of photos) frag.appendChild(createPhotoCard(photo));
-    grid.appendChild(frag);
-    grid.querySelectorAll('.lazy-thumb:not([data-observed])').forEach(img => {
-      img.dataset.observed = '1';
-      thumbObserver.observe(img);
-    });
-    galleryOffset += photos.length;
-    if (photos.length < galleryPageSize) galleryDone = true;
+    galleryItems = new Array(galleryTotal).fill(null);
+    await ensureGalleryRange(0, Math.min(galleryTotal, galleryFetchSize), seq);
+    galleryOffset = Math.min(galleryTotal, galleryFetchSize);
+    galleryDone = galleryOffset >= galleryTotal;
+    await renderGalleryWindow(seq);
   } catch (err) {
     if (seq !== gallerySeq) return;
-    // Never leave placeholders behind when a page fails to load.
-    grid.querySelectorAll('.skeleton-card').forEach(el => el.remove());
-    galleryDone = true;
-    if (galleryOffset === 0) {
-      empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">⚠️</div><p>照片读取失败，请重试</p>';
-      empty.classList.remove('hidden');
-    }
+    grid.innerHTML = '';
+    empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">⚠️</div><p>照片读取失败，请重试</p>';
+    empty.classList.remove('hidden');
     showToast('读取照片失败：' + err.message, 'error', 6000);
-  } finally {
-    if (seq === gallerySeq) galleryLoading = false;
   }
+}
+
+async function fetchGalleryPage(page, seq = gallerySeq) {
+  if (galleryPageCache.has(page)) return;
+  galleryPageCache.set(page, null);
+  const photos = await api.getPhotos({ ...currentGalleryQuery, offset: page * galleryFetchSize, limit: galleryFetchSize });
+  if (seq !== gallerySeq) return;
+  photos.forEach((photo, index) => { galleryItems[page * galleryFetchSize + index] = photo; });
+  galleryPageCache.set(page, true);
+}
+
+async function appendPhotos(query = currentGalleryQuery, seq = gallerySeq) {
+  if (galleryDone || seq !== gallerySeq) return;
+  const page = Math.floor(galleryOffset / galleryFetchSize);
+  await fetchGalleryPage(page, seq);
+  galleryOffset = Math.min(galleryTotal, galleryOffset + galleryFetchSize);
+  galleryDone = galleryOffset >= galleryTotal;
+  await renderGalleryWindow(seq);
+  void query;
+}
+
+async function ensureGalleryRange(start, end, seq = gallerySeq) {
+  const firstPage = Math.floor(Math.max(0, start) / galleryFetchSize);
+  const lastPage = Math.floor(Math.max(0, end - 1) / galleryFetchSize);
+  const pages = [];
+  for (let page = firstPage; page <= lastPage; page++) {
+    if (!galleryPageCache.has(page)) pages.push(fetchGalleryPage(page, seq));
+  }
+  await Promise.all(pages);
+}
+
+function calculateGalleryWindow(total, scrollTop, viewportHeight, rowHeight, overscanRows = 3, columns = 1) {
+  if (!total) return { start: 0, end: 0 };
+  const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscanRows);
+  const visibleRows = Math.ceil(viewportHeight / rowHeight) + overscanRows * 2;
+  return { start: Math.min(total, firstRow * columns), end: Math.min(total, (firstRow + visibleRows) * columns) };
+}
+
+function galleryLayout() {
+  const grid = document.getElementById('photo-grid');
+  const minSize = zoomSizes[currentZoomLevel] || 260;
+  const width = Math.max(320, grid.clientWidth || 1000);
+  const columns = Math.max(1, Math.floor((width - 40 + 12) / (minSize + 12)));
+  const cardWidth = (width - 40 - (columns - 1) * 12) / columns;
+  return { columns, rowHeight: Math.max(160, cardWidth + 12), padding: 20 };
+}
+
+async function renderGalleryWindow(seq = gallerySeq) {
+  const grid = document.getElementById('photo-grid');
+  const empty = document.getElementById('empty-state');
+  if (!galleryTotal) {
+    grid.innerHTML = '';
+    empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px">📷</div><p>当前筛选没有匹配的照片</p>';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const layout = galleryLayout();
+  const scroller = document.getElementById('main-content');
+  const windowRange = calculateGalleryWindow(galleryTotal, scroller.scrollTop, scroller.clientHeight, layout.rowHeight, 3, layout.columns);
+  const token = ++galleryWindowToken;
+  await ensureGalleryRange(windowRange.start, windowRange.end, seq);
+  if (seq !== gallerySeq || token !== galleryWindowToken) return;
+  const topRows = Math.floor(windowRange.start / layout.columns);
+  const endRows = Math.ceil((galleryTotal - windowRange.end) / layout.columns);
+  grid.innerHTML = '';
+  const top = document.createElement('div');
+  top.className = 'gallery-spacer';
+  top.style.height = `${topRows * layout.rowHeight}px`;
+  grid.appendChild(top);
+  const fragment = document.createDocumentFragment();
+  for (let index = windowRange.start; index < windowRange.end; index++) {
+    const photo = galleryItems[index];
+    if (photo) fragment.appendChild(createPhotoCard(photo));
+    else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'photo-card skeleton-card';
+      fragment.appendChild(placeholder);
+    }
+  }
+  grid.appendChild(fragment);
+  const bottom = document.createElement('div');
+  bottom.className = 'gallery-spacer';
+  bottom.style.height = `${Math.max(0, endRows) * layout.rowHeight}px`;
+  grid.appendChild(bottom);
+  grid.querySelectorAll('.lazy-thumb').forEach(img => {
+    img.dataset.observed = '1';
+    thumbObserver.observe(img);
+  });
+  detailNavList = galleryItems.filter(Boolean);
 }
 
 function createPhotoCard(photo) {
@@ -1918,22 +1974,8 @@ document.getElementById('btn-batch-soft-del').addEventListener('click', async ()
 let isLoadingMore = false;
 document.getElementById('main-content').addEventListener('scroll', async (e) => {
   if (currentView !== 'library' || isLoadingMore) return;
-  const el = e.target;
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
-    const grid = document.getElementById('photo-grid');
-    const currentCount = grid.children.length;
-    if (currentCount < 100) return; // Not enough photos to warrant loading more
-    isLoadingMore = true;
-    const more = await api.getPhotos({
-      offset: currentCount, limit: 200,
-      sortBy: document.getElementById('sort-select')?.value || 'date_taken',
-      sortDir: 'DESC',
-      filter: document.getElementById('filter-select')?.value || '',
-      searchQuery: document.getElementById('search-input')?.value || ''
-    });
-    for (const p of more) { grid.appendChild(createPhotoCard(p)); }
-    isLoadingMore = false;
-  }
+  isLoadingMore = true;
+  try { await renderGalleryWindow(); } finally { isLoadingMore = false; }
 });
 
 // --- Drag & Drop Folder Scan ---
