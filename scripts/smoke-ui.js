@@ -171,6 +171,33 @@ async function main() {
     })()`);
     check('Ctrl+A remains available to text inputs', inputGuard.selected === 0 && inputGuard.activeTag === 'INPUT', inputGuard);
 
+    const dateFilter = await cdp.evaluate(`(async () => {
+      const input = document.getElementById('date-from');
+      const original = input.value;
+      input.value = '2099-01-01';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 700));
+      const filtered = { total: galleryTotal, empty: !document.getElementById('empty-state').classList.contains('hidden') };
+      input.value = original;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 700));
+      return { filtered, restored: galleryTotal, cards: document.querySelectorAll('.photo-card').length };
+    })()`);
+    check('date filters reload the gallery', dateFilter.filtered.total === 0 && dateFilter.filtered.empty && dateFilter.restored > 0, dateFilter);
+
+    const contextDelete = await cdp.evaluate(`(async () => {
+      const originalConfirm = window.confirm;
+      let prompt = '';
+      window.confirm = message => { prompt = String(message); return false; };
+      selectedIds = new Set([101, 102, 103]);
+      ctxTargetPhoto = { id: 102, filename: 'test.jpg' };
+      document.querySelector('[data-action="delete-lib"]').click();
+      await new Promise(r => setTimeout(r, 100));
+      window.confirm = originalConfirm;
+      return { prompt, selection: selectedIds.size };
+    })()`);
+    check('context delete applies to the selected set', contextDelete.prompt.includes('3') && contextDelete.selection === 3, contextDelete);
+
     const comparison = await cdp.evaluate(`(async () => {
       document.getElementById('main-content').focus();
       const ids = galleryItems.filter(Boolean).slice(0, 2).map(photo => Number(photo.id));

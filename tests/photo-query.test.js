@@ -18,5 +18,5 @@ test('builds parameterized predicates shared by paging and select-all', () => {
   assert.match(result.sql, /deleted = 0/);
   assert.match(result.sql, /rating >= \?/);
   assert.deepEqual(result.params, [3, '2026-01-01', '2026-01-31T23:59:59', '%海%', '%海%', '%海%']);
-  assert.equal(buildPhotoOrder(query), 'ORDER BY date_taken DESC');
+  assert.equal(buildPhotoOrder(query), 'ORDER BY date_taken DESC, id DESC');
 });

@@ -64,10 +64,22 @@ class ClipSearch {
     return { configured: Boolean(this.modelPath), indexed: this.entries.length, total: this.entries.length };
   }
 
-  configure(modelPath) {
-    this.modelPath = String(modelPath || '').trim();
-    if (!this.modelPath) this.adapter = null;
+  async configure(modelPath) {
+    const nextModelPath = String(modelPath || '').trim();
+    await this.ensureLoaded();
+    if (nextModelPath !== this.modelPath) {
+      this.modelPath = nextModelPath;
+      this.adapter = null;
+      this.entries = [];
+      if (this.clearEntries) await this.clearEntries();
+    }
     return this.status();
+  }
+
+  removeIds(ids) {
+    const removed = new Set(Array.from(ids || []).map(Number).filter(Number.isInteger));
+    if (!removed.size) return;
+    this.entries = this.entries.filter(entry => !removed.has(Number(entry.id)));
   }
 
   async index(photos, onProgress) {

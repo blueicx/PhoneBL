@@ -88,13 +88,14 @@ async function loadPhotos(options = {}) {
   }
 
   const searchQ = options.searchQuery ?? document.getElementById('search-input')?.value ?? '';
-  const filter = options.filter || document.getElementById('filter-select')?.value || '';
-  const sortBy = options.sortBy || document.getElementById('sort-select')?.value || 'date_taken';
+  const filter = options.filter ?? document.getElementById('filter-select')?.value ?? '';
+  const sortBy = options.sortBy ?? document.getElementById('sort-select')?.value ?? 'date_taken';
 
-  const dateFrom = document.getElementById('date-from')?.value || '';
-  const dateTo = document.getElementById('date-to')?.value || '';
+  const dateFrom = options.dateFrom ?? document.getElementById('date-from')?.value ?? '';
+  const dateTo = options.dateTo ?? document.getElementById('date-to')?.value ?? '';
+  const sortDir = options.sortDir === 'ASC' ? 'ASC' : 'DESC';
   clearSelection();
-  currentGalleryQuery = { sortBy, sortDir: 'DESC', filter, searchQuery: searchQ, dateFrom, dateTo };
+  currentGalleryQuery = { sortBy, sortDir, filter, searchQuery: searchQ, dateFrom, dateTo };
   galleryOffset = 0; galleryDone = false; galleryLoading = false; detailNavList = [];
   galleryItems = [];
   galleryPageCache = new Map();
@@ -472,7 +473,9 @@ const TASK_TYPE_NAMES = {
   thumbnails: '修复缩略图',
   watermark: '添加水印',
   compression: '压缩照片',
-  'ai-tags': 'AI 标签'
+  'ai-tags': 'AI 标签',
+  xmp: '写入 XMP',
+  'clip-index': '建立 CLIP 索引'
 };
 const TASK_STATUS_NAMES = {
   queued: '排队中',
@@ -585,8 +588,7 @@ document.getElementById('btn-scan-start').addEventListener('click', async () => 
     setTimeout(() => statusEl.classList.add('hidden'), 5000);
     await updateStats();
     await loadPhotos();
-    photoMap = null;
-    markerCluster = null;
+    if (photoMap) await refreshMapPoints();
   } else {
     statusEl.textContent = `错误: ${result.error}`;
   }
@@ -602,6 +604,9 @@ let filterDebounce;
 document.getElementById('filter-select').addEventListener('change', () => {
   clearTimeout(filterDebounce);
   filterDebounce = setTimeout(() => loadPhotos(), 300);
+});
+['date-from', 'date-to'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => loadPhotos());
 });
 
 new IntersectionObserver(entries => {
@@ -622,7 +627,11 @@ document.getElementById('sort-select').addEventListener('change', () => {
 
 // --- Map ---
 async function initMap() {
-  if (photoMap) { photoMap.invalidateSize(); if (mapHeatMode) await renderHeatmap(); return; }
+  if (photoMap) {
+    photoMap.invalidateSize();
+    await refreshMapPoints();
+    return;
+  }
 
   photoMap = L.map('map-canvas').setView([30, 110], 4);
   L.tileLayer('maptile://tiles/{z}/{x}/{y}', {
@@ -634,8 +643,10 @@ async function initMap() {
     errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
   }).addTo(photoMap);
 
-  const points = await api.getMapPoints();
-  mapPoints = points;
+  await refreshMapPoints();
+}
+
+function createMapCluster(points) {
   markerCluster = L.markerClusterGroup({
     maxClusterRadius: 40,
     spiderfyOnMaxZoom: true,
@@ -657,12 +668,21 @@ async function initMap() {
       .bindPopup(popupHtml, { maxWidth: 160 })
       .addTo(markerCluster);
   }
+  return markerCluster;
+}
 
-  photoMap.addLayer(markerCluster);
+async function refreshMapPoints() {
+  if (!photoMap) return;
+  const points = await api.getMapPoints();
+  mapPoints = points;
+  if (markerCluster && photoMap.hasLayer(markerCluster)) photoMap.removeLayer(markerCluster);
+  markerCluster = createMapCluster(points);
+  if (!mapHeatMode) photoMap.addLayer(markerCluster);
 
   if (points.length > 0) {
     photoMap.fitBounds(markerCluster.getBounds().pad(0.1));
   }
+  if (mapHeatMode) await renderHeatmap();
 }
 
 async function renderHeatmap() {
@@ -1787,6 +1807,8 @@ document.querySelectorAll('#ctx-menu .ctx-item').forEach(item => {
     if (!ctxTargetPhoto) return;
     const action = item.dataset.action;
     const photo = ctxTargetPhoto;
+    const targetId = Number(photo.id);
+    const actionIds = selectedIds.has(targetId) ? [...selectedIds] : [targetId];
 
     switch (action) {
       case 'open':
@@ -1807,17 +1829,30 @@ document.querySelectorAll('#ctx-menu .ctx-item').forEach(item => {
         api.showInFolder(photo.path);
         break;
       case 'delete-lib':
-        if (confirm('确定从照片库中移除这张照片？（不会删除磁盘文件）')) {
-          await api.deletePhoto(photo.id);
-          loadPhotos();
-          updateStats();
+        if (confirm(`确定从照片库中移除这 ${actionIds.length} 张照片？（不会删除磁盘文件）`)) {
+            await Promise.all(actionIds.map(id => api.deletePhoto(id)));
+            clearSelection();
+            await loadPhotos();
+            await updateStats();
+            await refreshMapPoints();
         }
         break;
       case 'delete-disk':
-        if (confirm('⚠️ 确定从磁盘永久删除这张照片？\n此操作不可恢复！\n\n文件：' + photo.filename)) {
-          await api.deletePhotoDisk(photo.id);
-          loadPhotos();
-          updateStats();
+        if (confirm(`⚠️ 确定从磁盘永久删除这 ${actionIds.length} 张照片？\n此操作不可恢复！`)) {
+          await Promise.all(actionIds.map(id => api.deletePhotoDisk(id)));
+          clearSelection();
+          await loadPhotos();
+          await updateStats();
+          await refreshMapPoints();
+        }
+        break;
+      case 'delete-permanent':
+        if (confirm(`💥 确定永久删除这 ${actionIds.length} 张照片？\n数据库记录和关联版本将被删除，磁盘文件不会自动删除。`)) {
+          await Promise.all(actionIds.map(id => api.deletePhotoPermanent(id)));
+          clearSelection();
+          await loadPhotos();
+          await updateStats();
+          await refreshMapPoints();
         }
         break;
     }
@@ -2009,7 +2044,7 @@ async function openRecycleBin() {
     btn.addEventListener('click', async () => {
       await api.restorePhoto(d.id);
       row.remove();
-      loadPhotos();
+      await Promise.all([loadPhotos(), updateStats(), refreshMapPoints()]);
     });
     row.appendChild(btn);
     list.appendChild(row);
@@ -2046,8 +2081,7 @@ document.addEventListener('keydown', (e) => {
     if (confirm('将选中的 ' + selectedIds.size + ' 张照片移入回收站？')) {
       Promise.all([...selectedIds].map(id => api.softDeletePhoto(id))).then(() => {
         selectedIds.clear();
-        loadPhotos();
-        updateStats();
+        return Promise.all([loadPhotos(), updateStats(), refreshMapPoints()]);
       });
     }
   }
@@ -2075,7 +2109,9 @@ document.getElementById('btn-save-gps').addEventListener('click', async () => {
   const tagsInput = document.getElementById('detail-tags-input');
   const photoId = parseInt(tagsInput.dataset.photoId);
   if (!photoId || isNaN(lat) || isNaN(lon)) { showToast('请填写有效的经纬度'); return; }
-  await api.setGps(photoId, lat, lon);
+  const result = await api.setGps(photoId, lat, lon);
+  if (!result?.ok) { showToast(result?.error || '坐标保存失败', 'error'); return; }
+  if (photoMap) await refreshMapPoints();
   document.getElementById('btn-save-gps').textContent = '✅ 已保存';
   setTimeout(() => document.getElementById('btn-save-gps').textContent = '📍 保存坐标', 2000);
 });
@@ -2111,7 +2147,9 @@ document.getElementById('btn-batch-soft-del').addEventListener('click', async ()
   selectedIds.clear();
   document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
   updateBatchBar();
-  loadPhotos();
+  await loadPhotos();
+  await updateStats();
+  await refreshMapPoints();
 });
 
 // --- Infinite Scroll ---

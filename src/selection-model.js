@@ -45,4 +45,11 @@ class SelectionModel {
   }
 }
 
-module.exports = { SelectionModel };
+function resolveContextSelection(ids, targetId) {
+  const selected = normalizeIds(Array.from(ids || []));
+  const target = Number(targetId);
+  if (Number.isInteger(target) && selected.includes(target)) return selected;
+  return Number.isInteger(target) ? [target] : [];
+}
+
+module.exports = { SelectionModel, resolveContextSelection };

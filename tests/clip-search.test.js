@@ -30,3 +30,18 @@ test('continues indexing after one local image failure', async () => {
   const result = await clip.index([{ id: 1 }, { id: 2 }, { id: 3 }]);
   assert.deepEqual(result, { ok: true, indexed: 2, failed: 1, total: 3 });
 });
+
+test('changing the local model clears the old adapter and persisted index', async () => {
+  let cleared = 0;
+  const oldAdapter = { image: async () => [1, 0], text: async () => [1, 0] };
+  const clip = new ClipSearch({ modelPath: 'old-model', adapter: oldAdapter, clearEntries: async () => { cleared++; } });
+  clip.loaded = true;
+  clip.entries = [{ id: 1, vector: [1, 0] }];
+
+  await clip.configure('new-model');
+
+  assert.equal(clip.modelPath, 'new-model');
+  assert.equal(clip.adapter, null);
+  assert.deepEqual(clip.entries, []);
+  assert.equal(cleared, 1);
+});

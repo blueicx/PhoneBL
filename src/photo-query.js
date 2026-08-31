@@ -55,7 +55,7 @@ function buildPhotoWhere(options = {}) {
 
 function buildPhotoOrder(options = {}) {
   const query = normalizePhotoQuery(options);
-  return `ORDER BY ${query.sortBy} ${query.sortDir}`;
+  return `ORDER BY ${query.sortBy} ${query.sortDir}, id ${query.sortDir}`;
 }
 
 module.exports = { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder };

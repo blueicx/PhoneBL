@@ -88,7 +88,13 @@ async function initDb() {
     modelPath,
     adapterFactory: createLocalClipAdapter,
     loadEntries: async () => {
-      const rows = db.exec('SELECT photo_id, vector_json FROM clip_embeddings ORDER BY photo_id').at(0)?.values || [];
+      const rows = db.exec(`
+        SELECT ce.photo_id, ce.vector_json
+        FROM clip_embeddings ce
+        JOIN photos p ON p.id = ce.photo_id
+        WHERE p.deleted = 0 AND ce.model_id = ?
+        ORDER BY ce.photo_id
+      `, [clipSearch.modelPath]).at(0)?.values || [];
       return rows.flatMap(([id, vectorJson]) => {
         try { return [{ id: Number(id), vector: JSON.parse(vectorJson) }]; } catch { return []; }
       });
@@ -1261,11 +1267,11 @@ function jobHandlers() {
       const ids = Array.isArray(payload.ids) ? payload.ids.map(Number).filter(Number.isInteger) : [];
       for (const [index, id] of ids.entries()) {
         await shouldContinue();
-        const row = db.exec('SELECT path, tags, rating, color_label FROM photos WHERE id = ?', [id]).at(0)?.values?.[0];
+        const row = db.exec('SELECT path, tags, rating, color_label FROM photos WHERE id = ? AND deleted = 0', [id]).at(0)?.values?.[0];
         if (!row) { failed++; reportProgress(index + 1, ids.length, `${synced} 成功 / ${failed} 失败`); continue; }
         const [photoPath, tags, rating, colorLabel] = row;
         const result = await writeXmpSidecar({ path: photoPath, tags, rating, color_label: colorLabel });
-        db.run('UPDATE photos SET xmp_synced = ? WHERE id = ?', [result.ok ? 1 : 0, id]);
+        db.run('UPDATE photos SET xmp_synced = ? WHERE id = ? AND deleted = 0', [result.ok ? 1 : 0, id]);
         if (result.ok) synced++; else failed++;
         reportProgress(index + 1, ids.length, `${synced} 成功 / ${failed} 失败`);
       }
@@ -1288,14 +1294,14 @@ function jobHandlers() {
       for (const [index, id] of payload.ids.entries()) {
         await shouldContinue();
         try {
-          const photoPath = db.exec('SELECT path FROM photos WHERE id = ?', [id]).at(0)?.values?.[0]?.[0];
+          const photoPath = db.exec('SELECT path FROM photos WHERE id = ? AND deleted = 0', [id]).at(0)?.values?.[0]?.[0];
           if (!photoPath) throw new Error('照片不存在');
           const imageBuffer = await fsp.readFile(photoPath);
           const resized = await sharp(imageBuffer, { failOn: 'none' }).resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
           const text = await requestVision(aiConfig, resized.toString('base64'), 'image/jpeg');
-          const existing = db.exec('SELECT tags FROM photos WHERE id = ?', [id]).at(0)?.values?.[0]?.[0] || '';
+          const existing = db.exec('SELECT tags FROM photos WHERE id = ? AND deleted = 0', [id]).at(0)?.values?.[0]?.[0] || '';
           const tags = [...new Set([...existing.split(',').map(v => v.trim()).filter(Boolean), ...parseTags(text)])].join(',');
-          db.run('UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?', [tags, id]);
+          db.run('UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0', [tags, id]);
           success++;
         } catch (err) {
           failed++;
@@ -1485,7 +1491,7 @@ ipcMain.handle('get-photo-count', (event, options = {}) => {
 
 ipcMain.handle('get-map-points', () => {
   const results = db.exec(
-    "SELECT id, gps_lat, gps_lon, filename, thumb_path, date_taken, edited_at FROM photos WHERE has_gps = 1"
+    "SELECT id, gps_lat, gps_lon, filename, thumb_path, date_taken, edited_at FROM photos WHERE has_gps = 1 AND deleted = 0 AND gps_lat IS NOT NULL AND gps_lon IS NOT NULL"
   );
   if (results.length === 0) return [];
   const columns = results[0].columns;
@@ -1497,7 +1503,7 @@ ipcMain.handle('get-map-points', () => {
 });
 
 ipcMain.handle('get-photo-detail', (event, id) => {
-  const results = db.exec("SELECT * FROM photos WHERE id = ?", [id]);
+  const results = db.exec("SELECT * FROM photos WHERE id = ? AND deleted = 0", [id]);
   if (results.length === 0 || results[0].values.length === 0) return null;
   const columns = results[0].columns;
   const obj = {};
@@ -1506,14 +1512,14 @@ ipcMain.handle('get-photo-detail', (event, id) => {
 });
 
 ipcMain.handle('update-tags', (event, id, tagsStr) => {
-  db.run("UPDATE photos SET tags = ? WHERE id = ?", [tagsStr, id]);
+  db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0", [tagsStr, id]);
   saveDb();
   return true;
 });
 
 ipcMain.handle('batch-update-tags', (event, ids, action, value) => {
   for (const id of ids) {
-    const cur = db.exec("SELECT tags FROM photos WHERE id = ?", [id]);
+    const cur = db.exec("SELECT tags FROM photos WHERE id = ? AND deleted = 0", [id]);
     if (!cur.length || !cur[0].values.length) continue;
     const existing = (cur[0].values[0][0] || '').split(',').filter(Boolean).map(s => s.trim());
     let updated;
@@ -1523,17 +1529,17 @@ ipcMain.handle('batch-update-tags', (event, ids, action, value) => {
     } else if (action === 'remove') {
       updated = existing.filter(t => t !== value).join(',');
     }
-    db.run("UPDATE photos SET tags = ? WHERE id = ?", [updated, id]);
+    if (updated !== undefined) db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0", [updated, id]);
   }
   saveDb();
   return true;
 });
 
 ipcMain.handle('find-similar', (event, id) => {
-  const self = db.exec("SELECT color_hash FROM photos WHERE id = ?", [id]);
+  const self = db.exec("SELECT color_hash FROM photos WHERE id = ? AND deleted = 0", [id]);
   if (!self.length || !self[0].values.length || !self[0].values[0][0]) return [];
   const myHash = self[0].values[0][0].split(',').map(Number);
-  const all = db.exec("SELECT id, filename, thumb_path, color_hash FROM photos WHERE id != ? AND color_hash IS NOT NULL", [id]);
+  const all = db.exec("SELECT id, filename, thumb_path, color_hash FROM photos WHERE id != ? AND deleted = 0 AND color_hash IS NOT NULL", [id]);
   if (!all.length) return [];
 
   const scored = all[0].values.map(row => {
@@ -1550,15 +1556,15 @@ ipcMain.handle('find-similar', (event, id) => {
 });
 
 ipcMain.handle('get-stats', () => {
-  const total = db.exec("SELECT COUNT(*) FROM photos")[0].values[0][0];
-  const withGps = db.exec("SELECT COUNT(*) FROM photos WHERE has_gps = 1")[0].values[0][0];
-  const rawCount = db.exec("SELECT COUNT(*) FROM photos WHERE is_raw = 1")[0].values[0][0];
+  const total = db.exec("SELECT COUNT(*) FROM photos WHERE deleted = 0")[0].values[0][0];
+  const withGps = db.exec("SELECT COUNT(*) FROM photos WHERE has_gps = 1 AND deleted = 0")[0].values[0][0];
+  const rawCount = db.exec("SELECT COUNT(*) FROM photos WHERE is_raw = 1 AND deleted = 0")[0].values[0][0];
   let dateRange = { min: null, max: null };
-  const dates = db.exec("SELECT MIN(date_taken), MAX(date_taken) FROM photos WHERE date_taken IS NOT NULL");
+  const dates = db.exec("SELECT MIN(date_taken), MAX(date_taken) FROM photos WHERE date_taken IS NOT NULL AND deleted = 0");
   if (dates.length > 0 && dates[0].values.length > 0) {
     dateRange = { min: dates[0].values[0][0], max: dates[0].values[0][1] };
   }
-  const cameras = db.exec("SELECT camera_model, COUNT(*) FROM photos WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY COUNT(*) DESC LIMIT 5");
+  const cameras = db.exec("SELECT camera_model, COUNT(*) FROM photos WHERE camera_model IS NOT NULL AND deleted = 0 GROUP BY camera_model ORDER BY COUNT(*) DESC LIMIT 5");
   return { total, withGps, rawCount, dateRange,
     cameras: cameras.length ? cameras[0].values : [] };
 });
@@ -1683,7 +1689,7 @@ ipcMain.handle('ai-tag-single', async (event, id) => {
   const aiConfig = getAiConfig();
   if (!aiConfig.hasKey) return { ok: false, error: `请先在设置中配置 ${aiConfig.label} API Key` };
 
-  const photoResult = db.exec("SELECT path, ext FROM photos WHERE id = ?", [id]);
+  const photoResult = db.exec("SELECT path, ext FROM photos WHERE id = ? AND deleted = 0", [id]);
   if (!photoResult.length || !photoResult[0].values.length) return { ok: false, error: 'Photo not found' };
   const [photoPath, ext] = photoResult[0].values[0];
 
@@ -1699,12 +1705,12 @@ ipcMain.handle('ai-tag-single', async (event, id) => {
     const tagsText = await requestVision(aiConfig, base64, 'image/jpeg');
 
     // Merge with existing tags
-    const existing = db.exec("SELECT tags FROM photos WHERE id = ?", [id]);
+    const existing = db.exec("SELECT tags FROM photos WHERE id = ? AND deleted = 0", [id]);
     const currentTags = (existing[0]?.values[0]?.[0] || '').split(',').map(s => s.trim()).filter(Boolean);
     const newTags = parseTags(tagsText);
     const merged = [...new Set([...currentTags, ...newTags])].join(',');
 
-    db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?", [merged, id]);
+    db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0", [merged, id]);
     saveDb();
     return { ok: true, tags: merged };
   } catch (err) {
@@ -1724,7 +1730,7 @@ ipcMain.handle('ai-tag-batch', async (event, ids) => {
 
   for (const id of ids) {
     try {
-      const photoResult = db.exec("SELECT path FROM photos WHERE id = ?", [id]);
+      const photoResult = db.exec("SELECT path FROM photos WHERE id = ? AND deleted = 0", [id]);
       if (!photoResult.length || !photoResult[0].values.length) { failed++; continue; }
       const photoPath = photoResult[0].values[0][0];
 
@@ -1737,11 +1743,11 @@ ipcMain.handle('ai-tag-batch', async (event, ids) => {
 
       const tagsText = await requestVision(aiConfig, base64, 'image/jpeg');
 
-      const existing = db.exec("SELECT tags FROM photos WHERE id = ?", [id]);
+      const existing = db.exec("SELECT tags FROM photos WHERE id = ? AND deleted = 0", [id]);
       const currentTags = (existing[0]?.values[0]?.[0] || '').split(',').map(s => s.trim()).filter(Boolean);
       const newTags = parseTags(tagsText);
       const merged = [...new Set([...currentTags, ...newTags])].join(',');
-      db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ?", [merged, id]);
+      db.run("UPDATE photos SET tags = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0", [merged, id]);
       success++;
     } catch (err) {
       lastError = err.message;
@@ -1781,27 +1787,9 @@ ipcMain.handle('fix-missing-thumbs', async (event) => {
 });
 // --- Pagination support ---
 ipcMain.handle('get-photos-paged', (event, options = {}) => {
-  const { page = 0, perPage = 100, sortBy = 'date_taken', sortDir = 'DESC',
-          filter = '', searchQuery = '' } = options;
-
-  let where = ['deleted = 0'];
-  let params = [];
-  if (filter === 'gps') where.push('has_gps = 1');
-  if (filter === 'raw') where.push('is_raw = 1');
-  if (filter === 'starred') where.push('starred = 1');
-  if (/^[1-5]$/.test(filter)) { where.push('rating >= ?'); params.push(Number(filter)); }
-  if (options.dateFrom) { where.push('date_taken >= ?'); params.push(options.dateFrom); }
-  if (options.dateTo) { where.push('date_taken <= ?'); params.push(options.dateTo + 'T23:59:59'); }
-  if (filter === 'jpg') where.push("ext NOT IN ('.nef','.cr2','.cr3','.arw','.dng','.orf','.raf','.rw2')");
-  if (searchQuery) {
-    where.push('(filename LIKE ? OR tags LIKE ? OR date_taken LIKE ?)');
-    const q = `%${searchQuery}%`;
-    params.push(q, q, q);
-  }
-  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const validSorts = ['date_taken', 'filename', 'size', 'id'];
-  const sort = validSorts.includes(sortBy) ? sortBy : 'date_taken';
-  const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
+  const { page = 0, perPage = 100 } = options;
+  const query = normalizePhotoQuery(options);
+  const where = buildPhotoWhere(query);
   const offset = page * perPage;
 
   const sql = `
@@ -1809,11 +1797,11 @@ ipcMain.handle('get-photos-paged', (event, options = {}) => {
            camera_make, camera_model, iso, aperture, shutter, focal_length,
            gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps,
            rating, color_label, edited_at
-    FROM photos ${whereClause}
-    ORDER BY ${sort} ${dir}
+    FROM photos ${where.sql}
+    ${buildPhotoOrder(query)}
     LIMIT ? OFFSET ?
   `;
-  params.push(perPage, offset);
+  const params = [...where.params, Number(perPage), Number(offset)];
 
   const results = db.exec(sql, params);
   if (results.length === 0) return [];
@@ -1829,6 +1817,7 @@ ipcMain.handle('delete-photo', (event, id) => {
   const r = db.exec("SELECT path FROM photos WHERE id = ?", [id]);
   if (!r.length || !r[0].values.length) return false;
   db.run("DELETE FROM photos WHERE id = ?", [id]);
+  clipSearch?.removeIds([id]);
   saveDb();
   return true;
 });
@@ -1842,6 +1831,7 @@ ipcMain.handle('delete-photo-disk', async (event, id) => {
   const prevPath = filePath ? path.join(__dirname, 'data', 'previews', path.basename(filePath, path.extname(filePath)) + '.webp') : null;
   if (prevPath) { try { await fsp.unlink(prevPath); } catch {} }
   db.run("DELETE FROM photos WHERE id = ?", [id]);
+  clipSearch?.removeIds([id]);
   saveDb();
   return true;
 });
@@ -1852,28 +1842,33 @@ ipcMain.handle('delete-photo-permanent', async (event, id) => {
   db.run('DELETE FROM photo_versions WHERE photo_id = ?', [Number(id)]);
   db.run('DELETE FROM album_photos WHERE photo_id = ?', [Number(id)]);
   db.run('DELETE FROM photos WHERE id = ?', [Number(id)]);
+  clipSearch?.removeIds([id]);
   saveDb();
   return true;
 });
 
 ipcMain.handle('toggle-star', (event, id) => {
-  db.run("UPDATE photos SET starred = CASE WHEN starred = 1 THEN 0 ELSE 1 END WHERE id = ?", [id]);
+  db.run("UPDATE photos SET starred = CASE WHEN starred = 1 THEN 0 ELSE 1 END WHERE id = ? AND deleted = 0", [id]);
   saveDb();
-  const r = db.exec("SELECT starred FROM photos WHERE id = ?", [id]);
+  const r = db.exec("SELECT starred FROM photos WHERE id = ? AND deleted = 0", [id]);
   return r.length && r[0].values.length ? r[0].values[0][0] : 0;
 });
 
 // --- Recycle Bin ---
 ipcMain.handle('soft-delete-photo', (event, id) => {
-  db.run("UPDATE photos SET deleted = 1 WHERE id = ?", [id]);
+  const result = db.run("UPDATE photos SET deleted = 1 WHERE id = ? AND deleted = 0", [Number(id)]);
+  if (result.changes > 0) {
+    db.run('DELETE FROM clip_embeddings WHERE photo_id = ?', [Number(id)]);
+    clipSearch?.removeIds([id]);
+  }
   saveDb();
-  return true;
+  return result.changes > 0;
 });
 
 ipcMain.handle('restore-photo', (event, id) => {
-  db.run("UPDATE photos SET deleted = 0 WHERE id = ?", [id]);
+  const result = db.run("UPDATE photos SET deleted = 0 WHERE id = ? AND deleted = 1", [Number(id)]);
   saveDb();
-  return true;
+  return result.changes > 0;
 });
 
 ipcMain.handle('get-deleted-photos', () => {
@@ -1921,9 +1916,15 @@ ipcMain.handle('get-location-groups', () => {
 
 // --- GPS correction ---
 ipcMain.handle('set-gps', (event, id, lat, lon) => {
-  db.run("UPDATE photos SET gps_lat = ?, gps_lon = ?, has_gps = 1 WHERE id = ?", [lat, lon, id]);
+  const latitude = Number(lat);
+  const longitude = Number(lon);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return { ok: false, error: '经纬度超出有效范围' };
+  }
+  const result = db.run("UPDATE photos SET gps_lat = ?, gps_lon = ?, has_gps = 1 WHERE id = ? AND deleted = 0", [latitude, longitude, Number(id)]);
   saveDb();
-  return true;
+  return { ok: result.changes > 0, error: result.changes > 0 ? undefined : '照片不存在' };
 });
 
 // --- Batch rename planning and execution ---
@@ -2113,7 +2114,7 @@ ipcMain.handle('batch-rename', async (event, ids, patternOrOptions) => {
     try {
       if (fs.existsSync(item.newPath)) throw new Error('目标文件已存在');
       await fsp.rename(item.path, item.newPath);
-      db.run("UPDATE photos SET path = ?, filename = ? WHERE id = ?", [item.newPath, item.newName, item.id]);
+      db.run("UPDATE photos SET path = ?, filename = ? WHERE id = ? AND deleted = 0", [item.newPath, item.newName, item.id]);
       renamed++;
     } catch (error) {
       skipped++;
@@ -2201,7 +2202,8 @@ ipcMain.handle('find-bursts', () => {
     SELECT p1.id, p1.filename, p2.id, p2.filename, p1.date_taken
     FROM photos p1 JOIN photos p2
       ON abs(julianday(p1.date_taken) - julianday(p2.date_taken)) < 0.00001
-      AND p1.id < p2.id AND p1.has_gps = p2.has_gps AND p1.deleted = 0
+      AND p1.id < p2.id AND p1.has_gps = p2.has_gps
+      AND p1.deleted = 0 AND p2.deleted = 0
     LIMIT 200
   `);
   if (!r.length) return [];
@@ -2440,7 +2442,7 @@ ipcMain.handle('reset-photo-edit', async (event, id) => {
 });
 
 ipcMain.handle('export-photo-edit', async (event, id) => {
-  const r = db.exec("SELECT filename, edit_path FROM photos WHERE id = ?", [id]);
+  const r = db.exec("SELECT filename, edit_path FROM photos WHERE id = ? AND deleted = 0", [id]);
   if (!r.length || !r[0].values.length || !r[0].values[0][1]) {
     return { ok: false, error: '请先保存修图结果' };
   }
@@ -2457,7 +2459,7 @@ ipcMain.handle('export-photo-edit', async (event, id) => {
 
 ipcMain.handle('set-rating', (event, id, rating) => {
   const value = Math.max(0, Math.min(5, Number(rating) || 0));
-  db.run('UPDATE photos SET rating = ?, xmp_synced = 0 WHERE id = ?', [value, Number(id)]);
+  db.run('UPDATE photos SET rating = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0', [value, Number(id)]);
   saveDb();
   return value;
 });
@@ -2465,7 +2467,7 @@ ipcMain.handle('set-rating', (event, id, rating) => {
 ipcMain.handle('set-color-label', (event, id, color) => {
   const allowed = new Set(['', 'red', 'yellow', 'green', 'blue']);
   const value = allowed.has(color) ? color : '';
-  db.run('UPDATE photos SET color_label = ?, xmp_synced = 0 WHERE id = ?', [value, Number(id)]);
+  db.run('UPDATE photos SET color_label = ?, xmp_synced = 0 WHERE id = ? AND deleted = 0', [value, Number(id)]);
   saveDb();
   return value;
 });
@@ -2559,14 +2561,14 @@ ipcMain.handle('get-album-photos', (event, albumId, options = {}) => {
 });
 
 function runPhotoQuery(options = {}) {
-  const where = ['deleted = 0']; const params = [];
-  if (options.filter === 'gps') where.push('has_gps = 1');
-  if (options.filter === 'raw') where.push('is_raw = 1');
-  if (options.filter === 'jpg') where.push("ext IN ('.jpg','.jpeg')");
-  if (/^[1-5]$/.test(String(options.minRating))) { where.push('rating >= ?'); params.push(Number(options.minRating)); }
-  if (options.colorLabel) { where.push('color_label = ?'); params.push(options.colorLabel); }
-  if (options.searchQuery) { where.push('(filename LIKE ? OR tags LIKE ?)'); const q=`%${options.searchQuery}%`; params.push(q,q); }
-  const rows = db.exec(`SELECT * FROM photos WHERE ${where.join(' AND ')} ORDER BY date_taken DESC LIMIT ? OFFSET ?`, [...params, Number(options.limit||500), Number(options.offset||0)]);
+  const legacyFilter = options.filter || (/^[1-5]$/.test(String(options.minRating)) ? String(options.minRating) : '');
+  const query = { ...options, filter: legacyFilter };
+  const where = buildPhotoWhere(query);
+  const extraParams = options.colorLabel ? [String(options.colorLabel)] : [];
+  const whereSql = options.colorLabel ? `${where.sql} AND color_label = ?` : where.sql;
+  const rows = db.exec(`SELECT * FROM photos ${whereSql} ${buildPhotoOrder(query)} LIMIT ? OFFSET ?`, [
+    ...where.params, ...extraParams, Number(options.limit || 500), Number(options.offset || 0)
+  ]);
   if (!rows.length) return [];
   const cols=rows[0].columns;
   return rows[0].values.map(values=>Object.fromEntries(cols.map((c,i)=>[c,values[i]])));
@@ -2585,7 +2587,7 @@ ipcMain.handle('get-clip-status', async () => ({
 ipcMain.handle('configure-clip', async (event, modelPath) => {
   const normalized = String(modelPath || '').trim();
   if (normalized && !fs.existsSync(normalized)) return { ok: false, error: '本地模型路径不存在' };
-  clipSearch.configure(normalized);
+  await clipSearch.configure(normalized);
   db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['clip_model_path', normalized]);
   saveDb();
   return { ok: true, status: { ...(await clipSearch.status()), modelPath: clipSearch.modelPath } };
@@ -2595,7 +2597,15 @@ ipcMain.handle('start-clip-index', () => {
   const total = db.exec('SELECT COUNT(*) FROM photos WHERE deleted = 0')[0].values[0][0];
   return { ok: true, jobId: jobManager.submit('clip-index', {}, { total }) };
 });
-ipcMain.handle('clip-search', (event, text, limit) => clipSearch?.search(text, limit) || { ok: false, reason: 'model-not-configured', items: [] });
+ipcMain.handle('clip-search', async (event, text, limit) => {
+  const result = await clipSearch?.search(text, limit) || { ok: false, reason: 'model-not-configured', items: [] };
+  if (!result.ok || !result.items.length) return result;
+  const ids = result.items.map(item => Number(item.id)).filter(Number.isInteger);
+  const placeholders = ids.map(() => '?').join(',');
+  const active = db.exec(`SELECT id FROM photos WHERE deleted = 0 AND id IN (${placeholders})`, ids).at(0)?.values || [];
+  const activeIds = new Set(active.map(([id]) => Number(id)));
+  return { ...result, items: result.items.filter(item => activeIds.has(Number(item.id))) };
+});
 
 ipcMain.handle('get-trips', () => {
   const result = db.exec(`
