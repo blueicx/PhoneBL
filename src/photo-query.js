@@ -1,7 +1,7 @@
 'use strict';
 
 const SORT_COLUMNS = new Set(['date_taken', 'filename', 'size', 'id']);
-const FILTERS = new Set(['', 'gps', 'raw', 'jpg', 'starred', 'no-thumb']);
+const FILTERS = new Set(['', 'gps', 'raw', 'jpg', 'starred', 'compressed', 'no-thumb']);
 
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -30,6 +30,9 @@ function buildPhotoWhere(options = {}) {
   if (query.filter === 'gps') clauses.push('has_gps = 1');
   if (query.filter === 'raw') clauses.push('is_raw = 1');
   if (query.filter === 'starred') clauses.push('starred = 1');
+  if (query.filter === 'compressed') {
+    clauses.push("EXISTS (SELECT 1 FROM photo_versions WHERE photo_versions.photo_id = photos.id AND photo_versions.version_type = 'compression')");
+  }
   if (/^[1-5]$/.test(query.filter)) {
     clauses.push('rating >= ?');
     params.push(Number(query.filter));

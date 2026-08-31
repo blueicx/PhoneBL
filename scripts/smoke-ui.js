@@ -185,6 +185,26 @@ async function main() {
     })()`);
     check('date filters reload the gallery', dateFilter.filtered.total === 0 && dateFilter.filtered.empty && dateFilter.restored > 0, dateFilter);
 
+    const compressedFilter = await cdp.evaluate(`(async () => {
+      const select = document.getElementById('filter-select');
+      const original = select.value;
+      select.value = 'compressed';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 700));
+      const ids = galleryItems.filter(Boolean).slice(0, 3).map(photo => Number(photo.id));
+      const versions = await Promise.all(ids.map(id => mapApi.getPhotoVersions(id)));
+      const result = {
+        total: galleryTotal,
+        ids,
+        allHaveCompressionVersion: versions.every(items => items.some(item => item.version_type === 'compression'))
+      };
+      select.value = original;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 700));
+      return result;
+    })()`);
+    check('compressed filter shows only photos with compression versions', compressedFilter.allHaveCompressionVersion, compressedFilter);
+
     const contextDelete = await cdp.evaluate(`(async () => {
       const originalConfirm = window.confirm;
       let prompt = '';
