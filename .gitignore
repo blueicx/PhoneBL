@@ -3,6 +3,7 @@ node_modules/
 
 # Local application data
 data/
+.worktrees/
 release/
 
 # Logs
