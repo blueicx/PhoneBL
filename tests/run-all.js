@@ -10,3 +10,4 @@ require('./saved-searches.test.js');
 require('./xmp.test.js');
 require('./gallery-window.test.js');
 require('./comparison.test.js');
+require('./trip-analysis.test.js');

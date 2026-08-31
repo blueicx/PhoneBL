@@ -7,6 +7,7 @@ const { JobManager } = require('./src/job-manager');
 const { applyMetadataPolicy, writeXmpSidecar } = require('./src/metadata');
 const { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder } = require('./src/photo-query');
 const { normalizeSavedSearch, parseSavedSearch } = require('./src/saved-searches');
+const { splitTrips, clusterStayPoints, aggregateGpsGrid } = require('./src/trip-analysis');
 const { orientationTransform } = require('./src/image-utils');
 const { createLogger } = require('./src/logger');
 const {
@@ -2550,6 +2551,36 @@ ipcMain.handle('sync-xmp', (event, ids) => {
   const targets = Array.from(new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger)));
   if (!targets.length) return { ok: false, error: '请先选择照片' };
   return { ok: true, jobId: jobManager.submit('xmp', { ids: targets }, { total: targets.length }) };
+});
+
+ipcMain.handle('get-trips', () => {
+  const result = db.exec(`
+    SELECT id, gps_lat, gps_lon, date_taken, filename, thumb_path
+    FROM photos WHERE has_gps = 1 AND deleted = 0 AND gps_lat IS NOT NULL AND gps_lon IS NOT NULL
+    ORDER BY date_taken ASC, id ASC
+  `);
+  const cols = result[0]?.columns || [];
+  const photos = result[0]?.values?.map(row => Object.fromEntries(cols.map((col, index) => [col, row[index]]))) || [];
+  return splitTrips(photos).map(trip => ({
+    ...trip,
+    stays: clusterStayPoints(trip.photos)
+  }));
+});
+
+ipcMain.handle('get-stay-points', () => {
+  const trips = db.exec(`
+    SELECT id, gps_lat, gps_lon, date_taken, filename, thumb_path
+    FROM photos WHERE has_gps = 1 AND deleted = 0 AND gps_lat IS NOT NULL AND gps_lon IS NOT NULL
+    ORDER BY date_taken ASC, id ASC
+  `);
+  const cols = trips[0]?.columns || [];
+  const photos = trips[0]?.values?.map(row => Object.fromEntries(cols.map((col, index) => [col, row[index]]))) || [];
+  return splitTrips(photos).flatMap((trip, tripIndex) => clusterStayPoints(trip.photos).map(stay => ({ ...stay, tripIndex })));
+});
+
+ipcMain.handle('get-gps-heatmap', () => {
+  const result = db.exec('SELECT gps_lat, gps_lon FROM photos WHERE has_gps = 1 AND deleted = 0');
+  return aggregateGpsGrid(result[0]?.values?.map(([gps_lat, gps_lon]) => ({ gps_lat, gps_lon })) || []);
 });
 ipcMain.handle('job-list', () => jobManager.list());
 ipcMain.handle('job-pause', (event,id) => jobManager.pause(id));

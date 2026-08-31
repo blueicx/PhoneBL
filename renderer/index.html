@@ -37,6 +37,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span>时间线</span>
         </button>
+        <button class="nav-item" data-view="trips" title="旅程">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/><path d="M7 18c4-1 2-8 10-11"/><path d="M8 19h8"/></svg>
+          <span>旅程</span>
+        </button>
         <button class="nav-item" data-view="search" title="搜索">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <span>搜索</span>
@@ -114,7 +118,13 @@
 
       <!-- Map View -->
       <section id="view-map" class="view">
+        <div class="map-toolbar"><button id="btn-map-mode" class="btn-secondary">显示热力图</button><span id="map-mode-hint">GPS 照片位置</span></div>
         <div id="map-canvas"></div>
+      </section>
+
+      <section id="view-trips" class="view">
+        <div class="trips-header"><h2>旅程与停留点</h2><span id="trips-summary"></span></div>
+        <div id="trips-container" class="trips-container"><p>旅程视图加载中...</p></div>
       </section>
 
       <!-- Timeline View -->

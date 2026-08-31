@@ -20,6 +20,9 @@ function showToast(msg, type, duration) {
 let currentView = 'library';
 let photoMap = null;
 let markerCluster = null;
+let mapPoints = [];
+let heatLayer = null;
+let mapHeatMode = false;
 let selectedIds = new Set();
 let currentPhotoList = [];
 let lightboxIndex = -1;
@@ -60,6 +63,7 @@ function switchView(viewName) {
 
   if (viewName === 'map') initMap();
   if (viewName === 'timeline') loadTimeline();
+  if (viewName === 'trips') loadTrips();
   if (viewName === 'stats') loadStatistics();
 }
 
@@ -605,7 +609,7 @@ document.getElementById('sort-select').addEventListener('change', () => {
 
 // --- Map ---
 async function initMap() {
-  if (photoMap) { photoMap.invalidateSize(); return; }
+  if (photoMap) { photoMap.invalidateSize(); if (mapHeatMode) await renderHeatmap(); return; }
 
   photoMap = L.map('map-canvas').setView([30, 110], 4);
   L.tileLayer('maptile://tiles/{z}/{x}/{y}', {
@@ -618,6 +622,7 @@ async function initMap() {
   }).addTo(photoMap);
 
   const points = await api.getMapPoints();
+  mapPoints = points;
   markerCluster = L.markerClusterGroup({
     maxClusterRadius: 40,
     spiderfyOnMaxZoom: true,
@@ -645,6 +650,60 @@ async function initMap() {
   if (points.length > 0) {
     photoMap.fitBounds(markerCluster.getBounds().pad(0.1));
   }
+}
+
+async function renderHeatmap() {
+  if (!photoMap) return;
+  if (markerCluster && photoMap.hasLayer(markerCluster)) photoMap.removeLayer(markerCluster);
+  if (heatLayer && photoMap.hasLayer(heatLayer)) photoMap.removeLayer(heatLayer);
+  const cells = await api.getGpsHeatmap();
+  if (!cells.length) {
+    document.getElementById('map-mode-hint').textContent = '没有 GPS 照片';
+    return;
+  }
+  const maxCount = Math.max(...cells.map(cell => Number(cell.count)), 1);
+  heatLayer = L.layerGroup(cells.map(cell => L.circle([cell.lat + 0.005, cell.lon + 0.005], {
+    radius: 2500 + Math.sqrt(Number(cell.count) / maxCount) * 12000,
+    color: '#ff9f43', fillColor: '#ff6b35', fillOpacity: 0.18 + 0.5 * Number(cell.count) / maxCount,
+    weight: 1
+  })));
+  heatLayer.addTo(photoMap);
+  document.getElementById('map-mode-hint').textContent = `${cells.length} 个热力网格`;
+}
+
+document.getElementById('btn-map-mode').addEventListener('click', async () => {
+  mapHeatMode = !mapHeatMode;
+  const button = document.getElementById('btn-map-mode');
+  if (mapHeatMode) {
+    button.textContent = '显示普通标记';
+    await renderHeatmap();
+    return;
+  }
+  if (heatLayer && photoMap?.hasLayer(heatLayer)) photoMap.removeLayer(heatLayer);
+  if (markerCluster && photoMap && !photoMap.hasLayer(markerCluster)) markerCluster.addTo(photoMap);
+  document.getElementById('map-mode-hint').textContent = `${mapPoints.length} 个 GPS 标记`;
+});
+
+async function loadTrips() {
+  const container = document.getElementById('trips-container');
+  const summary = document.getElementById('trips-summary');
+  container.innerHTML = '<p>加载旅程...</p>';
+  const trips = await api.getTrips();
+  summary.textContent = `${trips.length} 段旅程`;
+  if (!trips.length) {
+    container.innerHTML = '<p class="stats-empty">暂无带 GPS 和时间信息的照片，无法生成旅程。</p>';
+    return;
+  }
+  container.innerHTML = '';
+  trips.forEach((trip, index) => {
+    const card = document.createElement('article');
+    card.className = 'trip-card';
+    const start = trip.start ? new Date(trip.start).toLocaleString() : '未知时间';
+    const end = trip.end ? new Date(trip.end).toLocaleString() : '未知时间';
+    card.innerHTML = `<h3>旅程 ${index + 1}</h3><div class="trip-meta">${escapeHtml(start)} — ${escapeHtml(end)} · ${trip.count} 张照片 · ${trip.stays.length} 个停留点</div>
+      <div class="stay-list">${trip.stays.map(stay => `<span class="stay-chip">📍 ${Number(stay.lat).toFixed(3)}, ${Number(stay.lon).toFixed(3)} · ${stay.count} 张</span>`).join('')}</div>`;
+    container.appendChild(card);
+  });
 }
 
 // --- Timeline: vertical line with day dots ---
