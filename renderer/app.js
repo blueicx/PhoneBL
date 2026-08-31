@@ -64,6 +64,7 @@ function switchView(viewName) {
   if (viewName === 'map') initMap();
   if (viewName === 'timeline') loadTimeline();
   if (viewName === 'trips') loadTrips();
+  if (viewName === 'search') loadClipStatus();
   if (viewName === 'stats') loadStatistics();
 }
 
@@ -1287,6 +1288,44 @@ function formatBytes(bytes) {
 // --- Batch Operations ---
 document.getElementById('btn-batch-clear').addEventListener('click', () => {
   clearSelection();
+});
+
+async function loadClipStatus() {
+  const status = await api.getClipStatus();
+  document.getElementById('clip-model-path').value = status.modelPath || '';
+  document.getElementById('clip-status').textContent = status.configured
+    ? `已配置 · 已索引 ${status.indexed} 张`
+    : '未配置本地模型';
+}
+
+document.getElementById('btn-save-clip-model').addEventListener('click', async () => {
+  const result = await api.configureClip(document.getElementById('clip-model-path').value.trim());
+  if (!result?.ok) { showToast('保存模型路径失败：' + (result?.error || '未知错误'), 'error'); return; }
+  await loadClipStatus();
+  showToast('本地 CLIP 模型路径已保存', 'success');
+});
+
+document.getElementById('btn-start-clip-index').addEventListener('click', async () => {
+  const result = await api.startClipIndex();
+  if (result?.ok) showToast('已创建本地 CLIP 索引任务', 'success');
+  else showToast('无法建立索引：' + (result?.error || '未知错误'), 'error');
+});
+
+document.getElementById('btn-clip-search').addEventListener('click', async () => {
+  const query = document.getElementById('clip-query').value.trim();
+  const grid = document.getElementById('search-results');
+  if (!query) { showToast('请输入语义搜索内容'); return; }
+  grid.innerHTML = '<p style="padding:20px;color:var(--text-secondary)">正在进行本地语义搜索...</p>';
+  const result = await api.clipSearch(query, 60);
+  if (!result?.ok) {
+    grid.innerHTML = '<p style="padding:20px;color:var(--text-secondary)">请先配置本地模型并建立索引。</p>';
+    showToast('本地 CLIP 尚未就绪', 'info');
+    return;
+  }
+  const details = await Promise.all(result.items.map(item => api.getPhotoDetail(item.id)));
+  grid.innerHTML = '';
+  details.filter(Boolean).forEach(photo => grid.appendChild(createPhotoCard(photo)));
+  if (!details.filter(Boolean).length) grid.innerHTML = '<p style="padding:20px;color:var(--text-secondary)">没有语义匹配结果。</p>';
 });
 
 document.getElementById('btn-select-all').addEventListener('click', selectAllCurrentResults);

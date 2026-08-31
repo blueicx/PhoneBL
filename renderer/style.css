@@ -276,6 +276,10 @@ body {
 .trip-meta { color: var(--text-secondary); font-size: 12px; }
 .stay-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .stay-chip { padding: 7px 10px; border-radius: 8px; background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; }
+.clip-search-panel { margin: 0 20px 10px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); }
+.clip-search-title { margin-bottom: 9px; color: var(--text-primary); font-weight: 600; }
+.clip-search-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.clip-search-row input { min-width: 0; flex: 1; padding: 8px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; }
 
 .photo-card {
   border-radius: 10px;

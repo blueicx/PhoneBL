@@ -11,3 +11,4 @@ require('./xmp.test.js');
 require('./gallery-window.test.js');
 require('./comparison.test.js');
 require('./trip-analysis.test.js');
+require('./clip-search.test.js');

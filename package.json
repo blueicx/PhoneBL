@@ -54,5 +54,8 @@
   "devDependencies": {
     "electron": "^41.10.7",
     "electron-builder": "^26.15.3"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.2.0"
   }
 }

@@ -137,6 +137,19 @@
         <div class="toolbar">
           <input type="text" id="adv-search-input" placeholder="输入关键词搜索全部照片..." />
         </div>
+        <div class="clip-search-panel">
+          <div class="clip-search-title">本地 CLIP 语义搜索</div>
+          <div class="clip-search-row">
+            <input id="clip-model-path" type="text" placeholder="本地模型目录（不联网）" />
+            <button id="btn-save-clip-model" class="btn-secondary">保存模型路径</button>
+            <button id="btn-start-clip-index" class="btn-primary">建立本地索引</button>
+          </div>
+          <div class="clip-search-row">
+            <input id="clip-query" type="text" placeholder="例如：日落海边、雪山、城市夜景" />
+            <button id="btn-clip-search" class="btn-secondary">语义搜索</button>
+            <span id="clip-status" class="hint">未配置本地模型</span>
+          </div>
+        </div>
         <div id="search-results" class="photo-grid"></div>
       </section>
 

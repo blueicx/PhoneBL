@@ -59,6 +59,11 @@ function migrateSchema(rawDb) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, query_json TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')), UNIQUE(name)
     );
+    CREATE TABLE IF NOT EXISTS clip_embeddings (
+      photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+      vector_json TEXT NOT NULL, model_id TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'queued', progress INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
@@ -77,6 +82,7 @@ function migrateSchema(rawDb) {
     CREATE INDEX IF NOT EXISTS idx_versions_photo ON photo_versions(photo_id);
     CREATE INDEX IF NOT EXISTS idx_album_photos_photo ON album_photos(photo_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_clip_embeddings_model ON clip_embeddings(model_id);
   `);
 
   addColumn(rawDb, 'photos', 'starred', 'INTEGER DEFAULT 0');

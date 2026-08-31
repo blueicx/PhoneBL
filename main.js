@@ -8,6 +8,7 @@ const { applyMetadataPolicy, writeXmpSidecar } = require('./src/metadata');
 const { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder } = require('./src/photo-query');
 const { normalizeSavedSearch, parseSavedSearch } = require('./src/saved-searches');
 const { splitTrips, clusterStayPoints, aggregateGpsGrid } = require('./src/trip-analysis');
+const { ClipSearch, createLocalClipAdapter } = require('./src/clip-search');
 const { orientationTransform } = require('./src/image-utils');
 const { createLogger } = require('./src/logger');
 const {
@@ -25,6 +26,7 @@ const crypto = require('crypto');
 let db = null;
 let mainWindow = null;
 let jobManager = null;
+let clipSearch = null;
 const logger = createLogger(path.join(__dirname, 'data', 'logs', 'main.log'));
 
 const DB_PATH = path.join(__dirname, 'data', 'photos.db');
@@ -81,6 +83,21 @@ async function setPhotoEdit(photoId, versionPath, settings, versionType = 'edit'
 
 async function initDb() {
   db = await openPhotoDatabase(DB_PATH);
+  const modelPath = db.exec("SELECT value FROM settings WHERE key = 'clip_model_path'").at(0)?.values?.[0]?.[0] || '';
+  clipSearch = new ClipSearch({
+    modelPath,
+    adapterFactory: createLocalClipAdapter,
+    loadEntries: async () => {
+      const rows = db.exec('SELECT photo_id, vector_json FROM clip_embeddings ORDER BY photo_id').at(0)?.values || [];
+      return rows.flatMap(([id, vectorJson]) => {
+        try { return [{ id: Number(id), vector: JSON.parse(vectorJson) }]; } catch { return []; }
+      });
+    },
+    clearEntries: async () => { db.run('DELETE FROM clip_embeddings'); saveDb(); },
+    saveEntry: async entry => {
+      db.run('INSERT OR REPLACE INTO clip_embeddings (photo_id, vector_json, model_id, updated_at) VALUES (?, ?, ?, datetime(\'now\'))', [entry.id, JSON.stringify(entry.vector), clipSearch.modelPath]);
+    }
+  });
 }
 
 function saveDb() {
@@ -1254,6 +1271,15 @@ function jobHandlers() {
       }
       saveDb();
       return { synced, failed, total: ids.length };
+    },
+    'clip-index': async ({ shouldContinue, reportProgress }) => {
+      await shouldContinue();
+      const result = db.exec('SELECT id, path FROM photos WHERE deleted = 0 ORDER BY id').at(0);
+      const photos = result?.values?.map(([id, photoPath]) => ({ id: Number(id), path: photoPath })) || [];
+      const indexed = await clipSearch.index(photos, (processed, total) => {
+        reportProgress(processed, total, `已建立 ${processed}/${total} 张向量`);
+      });
+      return indexed;
     },
     'ai-tags': async ({ payload, shouldContinue, reportProgress }) => {
       const aiConfig = getAiConfig();
@@ -2552,6 +2578,24 @@ ipcMain.handle('sync-xmp', (event, ids) => {
   if (!targets.length) return { ok: false, error: '请先选择照片' };
   return { ok: true, jobId: jobManager.submit('xmp', { ids: targets }, { total: targets.length }) };
 });
+ipcMain.handle('get-clip-status', async () => ({
+  ...(await clipSearch?.status() || { configured: false, indexed: 0, total: 0 }),
+  modelPath: clipSearch?.modelPath || ''
+}));
+ipcMain.handle('configure-clip', async (event, modelPath) => {
+  const normalized = String(modelPath || '').trim();
+  if (normalized && !fs.existsSync(normalized)) return { ok: false, error: '本地模型路径不存在' };
+  clipSearch.configure(normalized);
+  db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['clip_model_path', normalized]);
+  saveDb();
+  return { ok: true, status: { ...(await clipSearch.status()), modelPath: clipSearch.modelPath } };
+});
+ipcMain.handle('start-clip-index', () => {
+  if (!clipSearch?.modelPath) return { ok: false, error: '请先配置本地模型路径' };
+  const total = db.exec('SELECT COUNT(*) FROM photos WHERE deleted = 0')[0].values[0][0];
+  return { ok: true, jobId: jobManager.submit('clip-index', {}, { total }) };
+});
+ipcMain.handle('clip-search', (event, text, limit) => clipSearch?.search(text, limit) || { ok: false, reason: 'model-not-configured', items: [] });
 
 ipcMain.handle('get-trips', () => {
   const result = db.exec(`

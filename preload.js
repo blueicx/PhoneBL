@@ -91,5 +91,9 @@ contextBridge.exposeInMainWorld('mapApi', {
   addPhotosToAlbum: (albumId, ids) => ipcRenderer.invoke('add-photos-to-album', albumId, ids),
   removePhotoFromAlbum: (albumId, photoId) => ipcRenderer.invoke('remove-photo-from-album', albumId, photoId),
   getAlbumPhotos: (albumId, options) => ipcRenderer.invoke('get-album-photos', albumId, options),
-  reverseGeocode: (lat, lon) => ipcRenderer.invoke('reverse-geocode', lat, lon)
+  reverseGeocode: (lat, lon) => ipcRenderer.invoke('reverse-geocode', lat, lon),
+  getClipStatus: () => ipcRenderer.invoke('get-clip-status'),
+  configureClip: (modelPath) => ipcRenderer.invoke('configure-clip', modelPath),
+  startClipIndex: () => ipcRenderer.invoke('start-clip-index'),
+  clipSearch: (text, limit) => ipcRenderer.invoke('clip-search', text, limit)
 });
