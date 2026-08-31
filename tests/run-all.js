@@ -6,3 +6,4 @@ require('./metadata.test.js');
 require('./ai-vision.test.js');
 require('./photo-query.test.js');
 require('./selection-model.test.js');
+require('./saved-searches.test.js');

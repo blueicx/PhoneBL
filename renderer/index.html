@@ -60,6 +60,11 @@
       <section id="view-library" class="view active">
         <div class="toolbar">
           <input type="text" id="search-input" placeholder="搜索文件名、标签、日期..." />
+          <button id="btn-save-search" class="btn-secondary" title="保存当前搜索">保存搜索</button>
+          <select id="saved-search-select" title="恢复保存的搜索">
+            <option value="">保存的搜索</option>
+          </select>
+          <button id="btn-delete-saved-search" class="btn-secondary" title="删除当前保存的搜索">删除</button>
           <select id="filter-select">
             <option value="">全部照片</option>
             <option value="gps">有GPS</option>

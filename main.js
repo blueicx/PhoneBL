@@ -6,6 +6,7 @@ const { openPhotoDatabase } = require('./src/database');
 const { JobManager } = require('./src/job-manager');
 const { applyMetadataPolicy } = require('./src/metadata');
 const { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder } = require('./src/photo-query');
+const { normalizeSavedSearch, parseSavedSearch } = require('./src/saved-searches');
 const { orientationTransform } = require('./src/image-utils');
 const { createLogger } = require('./src/logger');
 const {
@@ -1403,6 +1404,34 @@ ipcMain.handle('get-photo-ids', (event, options = {}) => {
   const where = buildPhotoWhere(query);
   const rows = db.exec(`SELECT id FROM photos ${where.sql} ${buildPhotoOrder(query)}`, where.params);
   return rows[0]?.values?.map(row => Number(row[0])) || [];
+});
+
+ipcMain.handle('list-saved-searches', () => {
+  const result = db.exec('SELECT id, name, query_json, created_at FROM saved_searches ORDER BY name COLLATE NOCASE');
+  return result[0]?.values?.map(([id, name, queryJson, createdAt]) => ({
+    id: Number(id), name, query: parseSavedSearch(queryJson), createdAt
+  })) || [];
+});
+
+ipcMain.handle('save-saved-search', (event, name, query) => {
+  try {
+    const normalized = normalizeSavedSearch(name, query);
+    db.run('INSERT INTO saved_searches (name, query_json) VALUES (?, ?)', [
+      normalized.name, JSON.stringify(normalized.query)
+    ]);
+    saveDb();
+    const row = db.exec('SELECT id, created_at FROM saved_searches WHERE name = ?', [normalized.name])[0]?.values?.[0];
+    return { ok: true, id: Number(row?.[0]), name: normalized.name, query: normalized.query, createdAt: row?.[1] || null };
+  } catch (error) {
+    const message = /UNIQUE/i.test(error.message) ? '已存在同名保存搜索' : error.message;
+    return { ok: false, error: message };
+  }
+});
+
+ipcMain.handle('delete-saved-search', (event, id) => {
+  const result = db.run('DELETE FROM saved_searches WHERE id = ?', [Number(id)]);
+  saveDb();
+  return { ok: result.changes > 0 };
 });
 
 ipcMain.handle('get-photo-count', () => {

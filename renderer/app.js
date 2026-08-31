@@ -39,6 +39,7 @@ let gallerySeq = 0;
 let currentGalleryQuery = { filter: '', searchQuery: '', sortBy: 'date_taken', sortDir: 'DESC', dateFrom: '', dateTo: '' };
 let allResultIds = [];
 let allResultsSelected = false;
+let savedSearches = [];
 
 // --- View Switching ---
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -217,6 +218,24 @@ function clearSelection() {
   allResultsSelected = false;
   document.querySelectorAll('.photo-card.selected').forEach(card => card.classList.remove('selected'));
   updateBatchBar();
+}
+
+async function loadSavedSearches() {
+  const select = document.getElementById('saved-search-select');
+  if (!select) return;
+  savedSearches = await api.listSavedSearches();
+  select.innerHTML = '<option value="">保存的搜索</option>' + savedSearches
+    .map(item => `<option value="${Number(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+}
+
+function applySavedSearch(search) {
+  const query = search?.query || {};
+  document.getElementById('search-input').value = query.searchQuery || '';
+  document.getElementById('filter-select').value = query.filter || '';
+  document.getElementById('date-from').value = query.dateFrom || '';
+  document.getElementById('date-to').value = query.dateTo || '';
+  document.getElementById('sort-select').value = query.sortBy || 'date_taken';
+  void loadPhotos(query);
 }
 
 async function selectAllCurrentResults() {
@@ -1128,6 +1147,29 @@ document.getElementById('btn-batch-clear').addEventListener('click', () => {
 
 document.getElementById('btn-select-all').addEventListener('click', selectAllCurrentResults);
 document.getElementById('btn-batch-select-all').addEventListener('click', selectAllCurrentResults);
+document.getElementById('btn-save-search').addEventListener('click', async () => {
+  const name = prompt('为当前搜索输入名称：');
+  if (name === null) return;
+  const result = await api.saveSavedSearch(name, currentGalleryQuery);
+  if (!result?.ok) { showToast('保存搜索失败：' + (result?.error || '未知错误'), 'error'); return; }
+  await loadSavedSearches();
+  document.getElementById('saved-search-select').value = String(result.id);
+  showToast('搜索已保存', 'success');
+});
+document.getElementById('saved-search-select').addEventListener('change', (event) => {
+  const search = savedSearches.find(item => String(item.id) === event.target.value);
+  if (search) applySavedSearch(search);
+});
+document.getElementById('btn-delete-saved-search').addEventListener('click', async () => {
+  const select = document.getElementById('saved-search-select');
+  const id = Number(select.value);
+  if (!id) { showToast('请先选择一个保存的搜索'); return; }
+  const search = savedSearches.find(item => item.id === id);
+  if (!confirm(`删除保存的搜索“${search?.name || ''}”？`)) return;
+  const result = await api.deleteSavedSearch(id);
+  if (result?.ok) { await loadSavedSearches(); showToast('保存的搜索已删除', 'success'); }
+  else showToast('删除失败：找不到该保存搜索', 'error');
+});
 
 document.getElementById('btn-batch-ai-tag').addEventListener('click', async () => {
   const ids = [...selectedIds];
@@ -1957,6 +1999,7 @@ async function restoreSettings() {
     }
   } catch {}
   await loadPhotos({ sortBy: s.sortOrder });
+  await loadSavedSearches();
   await loadAiSettings().catch(err => console.warn('AI 设置读取失败', err));
 }
 
