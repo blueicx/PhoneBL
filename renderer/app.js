@@ -1179,6 +1179,13 @@ document.getElementById('btn-batch-ai-tag').addEventListener('click', async () =
   showToast(`已创建 AI 标签任务（${ids.length} 张）`);
   void btn;
 });
+document.getElementById('btn-batch-xmp').addEventListener('click', async () => {
+  const ids = [...selectedIds];
+  if (!ids.length) { showToast('请先选择照片'); return; }
+  const result = await api.syncXmp(ids);
+  if (result?.ok) showToast(`已创建 XMP 写入任务（${ids.length} 张）`, 'success');
+  else showToast('XMP 写入失败：' + (result?.error || '未知错误'), 'error');
+});
 
 document.getElementById('btn-close-batch-edit').addEventListener('click', () => {
   document.getElementById('batch-edit-modal').classList.add('hidden');

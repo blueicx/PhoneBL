@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('mapApi', {
   onScanProgress: (callback) => ipcRenderer.on('scan-progress', (event, data) => callback(data)),
   onAiTagProgress: (callback) => ipcRenderer.on('ai-tag-progress', (event, data) => callback(data)),
   jobStart: (type, payload, options) => ipcRenderer.invoke('job-start', type, payload, options),
+  syncXmp: (ids) => ipcRenderer.invoke('sync-xmp', ids),
   jobList: () => ipcRenderer.invoke('job-list'),
   jobPause: (id) => ipcRenderer.invoke('job-pause', id),
   jobResume: (id) => ipcRenderer.invoke('job-resume', id),

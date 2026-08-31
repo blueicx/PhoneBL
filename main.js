@@ -4,7 +4,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const { openPhotoDatabase } = require('./src/database');
 const { JobManager } = require('./src/job-manager');
-const { applyMetadataPolicy } = require('./src/metadata');
+const { applyMetadataPolicy, writeXmpSidecar } = require('./src/metadata');
 const { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder } = require('./src/photo-query');
 const { normalizeSavedSearch, parseSavedSearch } = require('./src/saved-searches');
 const { orientationTransform } = require('./src/image-utils');
@@ -1237,6 +1237,22 @@ function jobHandlers() {
       }
       saveDb();
       return { done, failed, total: payload.ids.length };
+    },
+    xmp: async ({ payload, shouldContinue, reportProgress }) => {
+      let synced = 0, failed = 0;
+      const ids = Array.isArray(payload.ids) ? payload.ids.map(Number).filter(Number.isInteger) : [];
+      for (const [index, id] of ids.entries()) {
+        await shouldContinue();
+        const row = db.exec('SELECT path, tags, rating, color_label FROM photos WHERE id = ?', [id]).at(0)?.values?.[0];
+        if (!row) { failed++; reportProgress(index + 1, ids.length, `${synced} 成功 / ${failed} 失败`); continue; }
+        const [photoPath, tags, rating, colorLabel] = row;
+        const result = await writeXmpSidecar({ path: photoPath, tags, rating, color_label: colorLabel });
+        db.run('UPDATE photos SET xmp_synced = ? WHERE id = ?', [result.ok ? 1 : 0, id]);
+        if (result.ok) synced++; else failed++;
+        reportProgress(index + 1, ids.length, `${synced} 成功 / ${failed} 失败`);
+      }
+      saveDb();
+      return { synced, failed, total: ids.length };
     },
     'ai-tags': async ({ payload, shouldContinue, reportProgress }) => {
       const aiConfig = getAiConfig();
@@ -2529,6 +2545,11 @@ function runPhotoQuery(options = {}) {
 }
 
 ipcMain.handle('job-start', (event, type, payload, options) => jobManager.submit(type, payload, options));
+ipcMain.handle('sync-xmp', (event, ids) => {
+  const targets = Array.from(new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger)));
+  if (!targets.length) return { ok: false, error: '请先选择照片' };
+  return { ok: true, jobId: jobManager.submit('xmp', { ids: targets }, { total: targets.length }) };
+});
 ipcMain.handle('job-list', () => jobManager.list());
 ipcMain.handle('job-pause', (event,id) => jobManager.pause(id));
 ipcMain.handle('job-resume', (event,id) => jobManager.resume(id));
