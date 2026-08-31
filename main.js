@@ -5,6 +5,7 @@ const fsp = fs.promises;
 const { openPhotoDatabase } = require('./src/database');
 const { JobManager } = require('./src/job-manager');
 const { applyMetadataPolicy } = require('./src/metadata');
+const { normalizePhotoQuery, buildPhotoWhere, buildPhotoOrder } = require('./src/photo-query');
 const { orientationTransform } = require('./src/image-utils');
 const { createLogger } = require('./src/logger');
 const {
@@ -1372,42 +1373,20 @@ ipcMain.handle('scan-folder', async (event, folderPath, includeRaw = true) => {
 });
 
 ipcMain.handle('get-photos', (event, options = {}) => {
-  const { offset = 0, limit = 200, sortBy = 'date_taken', sortDir = 'DESC',
-          filter = '', searchQuery = '' } = options;
-
-  let where = ['deleted = 0'];
-  let params = [];
-
-  if (filter === 'gps') where.push('has_gps = 1');
-  if (filter === 'raw') where.push('is_raw = 1');
-  if (filter === 'starred') where.push('starred = 1');
-  if (/^[1-5]$/.test(filter)) { where.push('rating >= ?'); params.push(Number(filter)); }
-  if (options.dateFrom) { where.push('date_taken >= ?'); params.push(options.dateFrom); }
-  if (options.dateTo) { where.push('date_taken <= ?'); params.push(options.dateTo + 'T23:59:59'); }
-  if (filter === 'jpg') where.push("ext NOT IN ('.nef','.cr2','.cr3','.arw','.dng','.orf','.raf','.rw2')");
-  if (filter === 'no-thumb') where.push('thumb_path IS NULL');
-
-  if (searchQuery) {
-    where.push('(filename LIKE ? OR tags LIKE ? OR date_taken LIKE ?)');
-    const q = `%${searchQuery}%`;
-    params.push(q, q, q);
-  }
-
-  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const validSorts = ['date_taken', 'filename', 'size', 'id'];
-  const sort = validSorts.includes(sortBy) ? sortBy : 'date_taken';
-  const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
+  const { offset = 0, limit = 200 } = options;
+  const query = normalizePhotoQuery(options);
+  const where = buildPhotoWhere(query);
 
   const sql = `
     SELECT id, path, filename, ext, size, width, height, date_taken, starred,
            camera_make, camera_model, iso, aperture, shutter, focal_length,
            gps_lat, gps_lon, tags, faces, thumb_path, is_raw, has_gps,
            color_hash, rating, color_label, edited_at
-    FROM photos ${whereClause}
-    ORDER BY ${sort} ${dir}
+    FROM photos ${where.sql}
+    ${buildPhotoOrder(query)}
     LIMIT ? OFFSET ?
   `;
-  params.push(limit, offset);
+  const params = [...where.params, Number(limit), Number(offset)];
 
   const results = db.exec(sql, params);
   if (results.length === 0) return [];
@@ -1417,6 +1396,13 @@ ipcMain.handle('get-photos', (event, options = {}) => {
     columns.forEach((col, i) => obj[col] = row[i]);
     return obj;
   });
+});
+
+ipcMain.handle('get-photo-ids', (event, options = {}) => {
+  const query = normalizePhotoQuery(options);
+  const where = buildPhotoWhere(query);
+  const rows = db.exec(`SELECT id FROM photos ${where.sql} ${buildPhotoOrder(query)}`, where.params);
+  return rows[0]?.values?.map(row => Number(row[0])) || [];
 });
 
 ipcMain.handle('get-photo-count', () => {

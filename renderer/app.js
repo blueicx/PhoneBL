@@ -36,6 +36,9 @@ let galleryDone = false;
 // Generation counter: lets a fresh load supersede an in-flight page request
 // instead of being swallowed by the loading lock.
 let gallerySeq = 0;
+let currentGalleryQuery = { filter: '', searchQuery: '', sortBy: 'date_taken', sortDir: 'DESC', dateFrom: '', dateTo: '' };
+let allResultIds = [];
+let allResultsSelected = false;
 
 // --- View Switching ---
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -72,14 +75,16 @@ async function loadPhotos(options = {}) {
     grid.appendChild(sk);
   }
 
-  const searchQ = options.searchQuery || document.getElementById('search-input')?.value || '';
+  const searchQ = options.searchQuery ?? document.getElementById('search-input')?.value ?? '';
   const filter = options.filter || document.getElementById('filter-select')?.value || '';
   const sortBy = options.sortBy || document.getElementById('sort-select')?.value || 'date_taken';
 
   const dateFrom = document.getElementById('date-from')?.value || '';
   const dateTo = document.getElementById('date-to')?.value || '';
+  clearSelection();
+  currentGalleryQuery = { sortBy, sortDir: 'DESC', filter, searchQuery: searchQ, dateFrom, dateTo };
   galleryOffset = 0; galleryDone = false; galleryLoading = false; detailNavList = [];
-  await appendPhotos({ sortBy, filter, searchQ, dateFrom, dateTo }, seq);
+  await appendPhotos(currentGalleryQuery, seq);
 }
 
 async function appendPhotos(query = {}, seq = gallerySeq) {
@@ -142,6 +147,7 @@ function createPhotoCard(photo) {
   const card = document.createElement('div');
   card.className = 'photo-card';
   card.dataset.id = photo.id;
+  if (selectedIds.has(Number(photo.id))) card.classList.add('selected');
 
   let badges = '';
   if (photo.has_gps) badges += '<span class="badge-gps">📍</span>';
@@ -182,11 +188,12 @@ function createPhotoCard(photo) {
 function toggleSelect(id, cardEl) {
   if (selectedIds.has(id)) {
     selectedIds.delete(id);
-    cardEl.classList.remove('selected');
+    cardEl?.classList.remove('selected');
   } else {
     selectedIds.add(id);
-    cardEl.classList.add('selected');
+    cardEl?.classList.add('selected');
   }
+  allResultsSelected = false;
   updateBatchBar();
 }
 
@@ -198,6 +205,40 @@ function updateBatchBar() {
     countEl.textContent = `已选 ${selectedIds.size} 张`;
   } else {
     bar.classList.add('hidden');
+  }
+  const label = allResultsSelected && selectedIds.size === allResultIds.length ? '取消全选' : '全选';
+  document.getElementById('btn-select-all')?.replaceChildren(document.createTextNode(label));
+  document.getElementById('btn-batch-select-all')?.replaceChildren(document.createTextNode(label));
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  allResultIds = [];
+  allResultsSelected = false;
+  document.querySelectorAll('.photo-card.selected').forEach(card => card.classList.remove('selected'));
+  updateBatchBar();
+}
+
+async function selectAllCurrentResults() {
+  const button = document.getElementById('btn-select-all');
+  if (button) button.disabled = true;
+  try {
+    const ids = (await api.getPhotoIds(currentGalleryQuery)).map(Number).filter(Number.isInteger);
+    const sameSelection = ids.length === selectedIds.size && ids.every(id => selectedIds.has(id));
+    if (sameSelection) {
+      clearSelection();
+      return;
+    }
+    allResultIds = ids;
+    selectedIds = new Set(ids);
+    allResultsSelected = true;
+    document.querySelectorAll('.photo-card').forEach(card => card.classList.add('selected'));
+    updateBatchBar();
+    showToast(ids.length ? `已选中当前结果 ${ids.length} 张照片` : '当前筛选结果为空', ids.length ? 'success' : 'info');
+  } catch (err) {
+    showToast('全选失败：' + err.message, 'error');
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -1082,21 +1123,11 @@ function formatBytes(bytes) {
 
 // --- Batch Operations ---
 document.getElementById('btn-batch-clear').addEventListener('click', () => {
-  selectedIds.clear();
-  document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
-  updateBatchBar();
+  clearSelection();
 });
 
-document.getElementById('btn-batch-select-all').addEventListener('click', () => {
-  document.querySelectorAll('.photo-card').forEach(card => {
-    const id = parseInt(card.dataset.id);
-    if (!selectedIds.has(id)) {
-      selectedIds.add(id);
-      card.classList.add('selected');
-    }
-  });
-  updateBatchBar();
-});
+document.getElementById('btn-select-all').addEventListener('click', selectAllCurrentResults);
+document.getElementById('btn-batch-select-all').addEventListener('click', selectAllCurrentResults);
 
 document.getElementById('btn-batch-ai-tag').addEventListener('click', async () => {
   const ids = [...selectedIds];
@@ -1739,7 +1770,13 @@ async function openRecycleBin() {
 // --- Keyboard Shortcuts ---
 document.addEventListener('keydown', (e) => {
   // Skip if typing in an input
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && currentView === 'library') {
+    e.preventDefault();
+    void selectAllCurrentResults();
+    return;
+  }
   
   // Space in library view -> toggle star of selected/last photo
   if (e.key === ' ' && currentView === 'library') {

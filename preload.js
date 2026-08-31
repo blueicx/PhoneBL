@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('mapApi', {
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   scanFolder: (folderPath) => ipcRenderer.invoke('scan-folder', folderPath),
   getPhotos: (options) => ipcRenderer.invoke('get-photos', options),
+  getPhotoIds: (options) => ipcRenderer.invoke('get-photo-ids', options),
   getPhotoCount: () => ipcRenderer.invoke('get-photo-count'),
   getMapPoints: () => ipcRenderer.invoke('get-map-points'),
   getPhotoDetail: (id) => ipcRenderer.invoke('get-photo-detail', id),
